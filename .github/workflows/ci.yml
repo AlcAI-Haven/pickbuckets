@@ -30,8 +30,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install test runner
+        run: python -m pip install pytest
       - name: Install base package only
         run: python -m pip install -e .
       - name: Verify pure-Python runtime
         run: python -m pytest tests/test_runtime_no_heavy_deps.py
-
