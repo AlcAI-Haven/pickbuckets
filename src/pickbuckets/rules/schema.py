@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from math import isinf, isnan
 from typing import Any, ClassVar, Literal
 
 from pickbuckets._version import __version__
@@ -38,10 +39,25 @@ class Rule:
     def __post_init__(self) -> None:
         if self.kind not in {"numeric", "categorical"}:
             raise RuleSchemaError(f"Unsupported rule kind: {self.kind!r}")
+        if self.closed != "left":
+            raise RuleSchemaError(f"Unsupported closed-side policy: {self.closed!r}")
+        if self.missing_strategy not in {"separate", "error", "propagate"}:
+            raise RuleSchemaError(
+                f"Unsupported missing strategy: {self.missing_strategy!r}"
+            )
+        if self.boundary_strategy not in {"clip", "error"}:
+            raise RuleSchemaError(
+                f"Unsupported boundary strategy: {self.boundary_strategy!r}"
+            )
+        if self.unknown_category_strategy not in {"other", "error"}:
+            raise RuleSchemaError(
+                "Unsupported unknown-category strategy: "
+                f"{self.unknown_category_strategy!r}"
+            )
         if self.kind == "numeric":
-            if self.edges is None or len(self.edges) < 2:
-                raise RuleSchemaError("Numeric rules require at least two edges.")
-            if len(self.labels) != len(self.edges) - 1:
+            edges = _normalize_edges(self.edges)
+            object.__setattr__(self, "edges", edges)
+            if len(self.labels) != len(edges) - 1:
                 raise RuleSchemaError("Numeric label count must equal interval count.")
         if self.kind == "categorical":
             if self.category_mapping is None:
@@ -66,7 +82,7 @@ class Rule:
             "package_version": self.package_version,
             "kind": self.kind,
             "feature_name": self.feature_name,
-            "edges": self.edges,
+            "edges": _encode_edges(self.edges),
             "category_mapping": self.category_mapping,
             "labels": self.labels,
             "closed": self.closed,
@@ -105,7 +121,7 @@ class Rule:
         )
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        return json.dumps(self.to_dict(), allow_nan=False, indent=2, sort_keys=True)
 
     @classmethod
     def from_json(cls, payload: str) -> Rule:
@@ -113,3 +129,46 @@ class Rule:
         if not isinstance(data, dict):
             raise RuleSchemaError("Rule JSON payload must decode to an object.")
         return cls.from_dict(data)
+
+
+def _normalize_edges(edges: list[Any] | None) -> list[float]:
+    if edges is None or len(edges) < 2:
+        raise RuleSchemaError("Numeric rules require at least two edges.")
+
+    normalized: list[float] = []
+    for edge in edges:
+        try:
+            number = _decode_edge(edge)
+        except (TypeError, ValueError) as exc:
+            raise RuleSchemaError(f"Invalid numeric edge: {edge!r}") from exc
+        if isnan(number):
+            raise RuleSchemaError("Numeric edges cannot be NaN.")
+        normalized.append(number)
+
+    if len(normalized) == 2:
+        if normalized[0] > normalized[1]:
+            raise RuleSchemaError("Numeric edges must be sorted.")
+    elif any(left >= right for left, right in zip(normalized, normalized[1:])):
+        raise RuleSchemaError("Numeric edges must be sorted and unique.")
+
+    return normalized
+
+
+def _decode_edge(edge: Any) -> float:
+    if edge == "inf":
+        return float("inf")
+    if edge == "-inf":
+        return float("-inf")
+    return float(edge)
+
+
+def _encode_edges(edges: list[float] | None) -> list[Any] | None:
+    if edges is None:
+        return None
+    result: list[Any] = []
+    for edge in edges:
+        if isinf(edge):
+            result.append("inf" if edge > 0 else "-inf")
+        else:
+            result.append(edge)
+    return result

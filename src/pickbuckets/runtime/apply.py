@@ -4,7 +4,12 @@ from collections.abc import Iterable
 from math import isnan
 from typing import Any
 
-from pickbuckets.exceptions import BoundaryError, UnknownCategoryError
+from pickbuckets.exceptions import (
+    BoundaryError,
+    InvalidBucketingError,
+    MissingValueError,
+    UnknownCategoryError,
+)
 from pickbuckets.rules import Rule
 
 
@@ -30,7 +35,7 @@ def _handle_missing(rule: Rule, value: Any) -> Any:
         return rule.missing_label
     if rule.missing_strategy == "propagate":
         return value
-    raise ValueError("Missing value encountered and missing_strategy='error'.")
+    raise MissingValueError("Missing value encountered and missing_strategy='error'.")
 
 
 def _apply_numeric(rule: Rule, value: Any) -> Any:
@@ -38,7 +43,13 @@ def _apply_numeric(rule: Rule, value: Any) -> Any:
         return _handle_missing(rule, value)
 
     edges = rule.edges or []
-    number = float(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        message = f"Non-numeric value encountered during transform: {value!r}"
+        raise InvalidBucketingError(message) from exc
+    if isnan(number):
+        return _handle_missing(rule, value)
     first = edges[0]
     last = edges[-1]
 
@@ -72,4 +83,3 @@ def _apply_categorical(rule: Rule, value: Any) -> Any:
     if rule.unknown_category_strategy == "other":
         return rule.unknown_label
     raise UnknownCategoryError(f"Unknown category: {value!r}")
-

@@ -7,6 +7,7 @@ from pickbuckets.core._utils import make_labels, numeric_values, validate_n_bins
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.exceptions import InvalidBucketingError
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import BoundaryStrategy, MissingStrategy
 
 
 class EqualFrequencyBucket(BaseBucket):
@@ -17,9 +18,9 @@ class EqualFrequencyBucket(BaseBucket):
         *,
         duplicates: str = "raise",
         feature_name: str | None = None,
-        missing_strategy: str = "separate",
+        missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
-        boundary_strategy: str = "clip",
+        boundary_strategy: BoundaryStrategy = "clip",
     ) -> None:
         validate_n_bins(n_bins)
         if duplicates not in {"raise", "drop"}:

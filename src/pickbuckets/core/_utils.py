@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from math import isfinite
+from math import isfinite, isinf, isnan
 from typing import Any
 
 from pickbuckets.exceptions import InvalidBucketingError
@@ -36,7 +36,15 @@ def validate_n_bins(n_bins: int) -> None:
 def validate_edges(edges: Sequence[float]) -> list[float]:
     if len(edges) < 2:
         raise InvalidBucketingError("At least two edges are required.")
-    converted = [float(edge) for edge in edges]
+    converted: list[float] = []
+    for edge in edges:
+        try:
+            number = float(edge)
+        except (TypeError, ValueError) as exc:
+            raise InvalidBucketingError(f"Invalid edge value: {edge!r}") from exc
+        if isnan(number):
+            raise InvalidBucketingError("Edges cannot contain NaN.")
+        converted.append(number)
     if any(left >= right for left, right in zip(converted, converted[1:])):
         raise InvalidBucketingError("Edges must be sorted and unique.")
     return converted
@@ -63,6 +71,8 @@ def make_labels(edges: Sequence[float], labels: str | Sequence[Any]) -> list[Any
 
 
 def _format_edge(edge: float) -> str:
+    if isinf(edge):
+        return "inf" if edge > 0 else "-inf"
     if edge.is_integer():
         return str(int(edge))
     return f"{edge:g}"

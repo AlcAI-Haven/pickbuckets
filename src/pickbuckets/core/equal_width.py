@@ -6,6 +6,7 @@ from typing import Any
 from pickbuckets.core._utils import make_labels, numeric_values, validate_n_bins
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import BoundaryStrategy, MissingStrategy
 
 
 class EqualWidthBucket(BaseBucket):
@@ -15,9 +16,9 @@ class EqualWidthBucket(BaseBucket):
         labels: str | Sequence[Any] = "ordinal",
         *,
         feature_name: str | None = None,
-        missing_strategy: str = "separate",
+        missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
-        boundary_strategy: str = "clip",
+        boundary_strategy: BoundaryStrategy = "clip",
     ) -> None:
         validate_n_bins(n_bins)
         self.n_bins = n_bins
@@ -54,4 +55,3 @@ class EqualWidthBucket(BaseBucket):
             },
         )
         return self
-
