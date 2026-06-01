@@ -8,6 +8,7 @@ from pickbuckets.core import (
 from pickbuckets.exceptions import (
     BoundaryError,
     InvalidBucketingError,
+    MissingValueError,
     NotFittedError,
     PickBucketsError,
     RuleSchemaError,
@@ -21,6 +22,7 @@ __all__ = [
     "EqualFrequencyBucket",
     "EqualWidthBucket",
     "InvalidBucketingError",
+    "MissingValueError",
     "NotFittedError",
     "PickBucketsError",
     "RareCategoryBucket",
@@ -29,4 +31,3 @@ __all__ = [
     "UnknownCategoryError",
     "__version__",
 ]
-

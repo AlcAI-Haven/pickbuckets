@@ -7,6 +7,7 @@ from typing import Any
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.exceptions import InvalidBucketingError
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import MissingStrategy, UnknownCategoryStrategy
 from pickbuckets.runtime.apply import is_missing
 
 
@@ -17,9 +18,9 @@ class RareCategoryBucket(BaseBucket):
         *,
         other_label: Any = "Other",
         feature_name: str | None = None,
-        missing_strategy: str = "separate",
+        missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
-        unknown_category_strategy: str = "other",
+        unknown_category_strategy: UnknownCategoryStrategy = "other",
     ) -> None:
         if not isinstance(min_frequency, (int, float)) or min_frequency <= 0:
             raise InvalidBucketingError(

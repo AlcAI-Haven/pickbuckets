@@ -11,6 +11,9 @@ from pickbuckets.runtime import apply_rule
 class BaseBucket:
     rules_: Rule
 
+    def fit(self, values: Iterable[Any]) -> BaseBucket:
+        raise NotImplementedError
+
     def transform(self, values: Iterable[Any]) -> list[Any]:
         if not hasattr(self, "rules_"):
             raise NotFittedError("This bucketer must be fitted before transform().")
@@ -41,4 +44,3 @@ class BaseBucket:
         obj = cls.__new__(cls)
         obj.rules_ = Rule.from_json(payload)
         return obj
-

@@ -35,7 +35,7 @@ polars = ["polars>=0.20"]
 sklearn = ["scikit-learn>=1.2"]
 plot = ["matplotlib>=3.7"]
 yaml = ["PyYAML>=6.0"]
-dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10", "build>=1.2"]
+dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10,<2", "build>=1.2"]
 all = [
   "pandas>=1.5",
   "polars>=0.20",

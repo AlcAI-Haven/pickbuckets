@@ -6,6 +6,7 @@ from typing import Any
 from pickbuckets.core._utils import make_labels, numeric_values, validate_edges
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import BoundaryStrategy, MissingStrategy
 
 
 class CustomBoundaryBucket(BaseBucket):
@@ -15,9 +16,9 @@ class CustomBoundaryBucket(BaseBucket):
         labels: str | Sequence[Any] = "ordinal",
         *,
         feature_name: str | None = None,
-        missing_strategy: str = "separate",
+        missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
-        boundary_strategy: str = "clip",
+        boundary_strategy: BoundaryStrategy = "clip",
     ) -> None:
         self.edges = validate_edges(edges)
         make_labels(self.edges, labels)

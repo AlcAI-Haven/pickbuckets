@@ -14,10 +14,13 @@ class BoundaryError(PickBucketsError):
     """Raised when a value falls outside allowed numeric boundaries."""
 
 
+class MissingValueError(PickBucketsError, ValueError):
+    """Raised when missing values are not allowed by the active rule."""
+
+
 class UnknownCategoryError(PickBucketsError):
     """Raised when a category is not present in a categorical rule."""
 
 
 class InvalidBucketingError(PickBucketsError, ValueError):
     """Raised when inputs or parameters cannot produce valid buckets."""
-
