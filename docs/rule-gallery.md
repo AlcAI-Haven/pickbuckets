@@ -1,28 +1,27 @@
 # Rule Gallery
 
 This page shows the kind of portable JSON rules `pickbuckets` is designed to
-produce and apply. The examples are intentionally domain-shaped: they look like
-rules a data, risk, or compliance team could review in a pull request.
+produce and apply. The examples stay focused on credit scoring, fraud
+detection, and regulatory/compliance risk models, where bucket definitions are
+usually part of the reviewable model contract.
 
 ## When To Use This
 
 Use `pickbuckets` when the bucket definition itself needs to be durable,
-inspectable, and portable across tools.
+inspectable, and portable across tools in focused risk-modeling workflows.
 
 - Credit scoring: freeze score, income, utilization, or delinquency bands so
   model training and production scoring use the same reviewed cut points.
 - Fraud detection: share amount, velocity, merchant category, device, or country
   buckets between feature generation, online decisions, and investigation jobs.
-- Regulatory models: keep jurisdiction, exposure, capital, or risk-band rules in
-  JSON so changes can be diffed, approved, and reproduced.
-- Compliance operations: map customer, product, or geography categories to
-  review tiers without shipping a full data-science stack into every service.
-- Pricing and eligibility: make age, tenure, usage, or plan buckets explicit
-  enough for analysts, API owners, and auditors to inspect.
-- Analytics and BI: publish the same bucket rules used in Python jobs to
-  downstream reporting layers.
+- Regulatory and compliance risk models: keep jurisdiction, exposure, capital,
+  or review-tier rules in JSON so changes can be diffed, approved, and
+  reproduced.
 
 ## JSON Rule Examples
+
+Each example below is shaped like a rule a model-risk, fraud, or credit team
+could inspect in code review.
 
 ### Credit Score Bands
 

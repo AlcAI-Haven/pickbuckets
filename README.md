@@ -44,19 +44,15 @@ The v0.3 robustness release is implemented:
 Use `pickbuckets` when bucket boundaries are part of the model contract, not
 just an implementation detail:
 
-- credit scoring and lending models that need stable score bands and auditable
-  applicant attributes
-- fraud detection pipelines that share transaction amount, velocity, or merchant
-  category buckets across training, batch scoring, and online services
-- regulatory, compliance, and risk models where rule changes need to be
-  reviewed, diffed, approved, and replayed
-- customer segmentation, eligibility, and pricing workflows that need the same
-  buckets in notebooks, jobs, APIs, and BI exports
-- lightweight inference services that should apply preprocessing rules without
-  importing pandas, Polars, or scikit-learn
+- credit scoring models that need reviewed score, utilization, income, or
+  delinquency bands to stay identical across training and production scoring
+- fraud detection models that reuse amount, transaction velocity, device risk,
+  or merchant-category buckets in online and batch decisions
+- regulatory and compliance risk models where jurisdiction, exposure, capital,
+  or review-tier rules need to be diffed, approved, and replayed
 
 See [docs/rule-gallery.md](docs/rule-gallery.md) for realistic JSON rule
-examples.
+examples in those domains.
 
 ## Install
 
