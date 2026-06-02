@@ -3,6 +3,7 @@ import pytest
 from pickbuckets import (
     AutoBucket,
     EqualWidthBucket,
+    InvalidBucketingError,
     NotFittedError,
     RareCategoryBucket,
 )
@@ -61,3 +62,36 @@ def test_autobucket_override_takes_precedence():
     auto = AutoBucket(overrides={"score": override}).fit(frame)
     assert auto.rules_["score"].fit_stats["algorithm"] == "equal_width"
     assert auto.rules_["score"].feature_name == "score"
+
+
+def test_autobucket_rejects_unknown_override_column():
+    with pytest.raises(InvalidBucketingError, match="unknown columns"):
+        AutoBucket(overrides={"typo": EqualWidthBucket(n_bins=2)}).fit(
+            {"score": [0, 1]}
+        )
+
+
+def test_autobucket_rejects_non_bucketer_override():
+    with pytest.raises(InvalidBucketingError, match="must be a pickbuckets bucketer"):
+        AutoBucket(overrides={"score": object()}).fit({"score": [0, 1]})
+
+
+def test_autobucket_rejects_empty_and_ragged_mapping_frames():
+    with pytest.raises(InvalidBucketingError, match="at least one column"):
+        AutoBucket().fit({})
+    with pytest.raises(InvalidBucketingError, match="same length"):
+        AutoBucket().fit({"a": [1, 2], "b": [1]})
+
+
+def test_autobucket_rejects_invalid_min_frequency_early():
+    with pytest.raises(InvalidBucketingError):
+        AutoBucket(min_frequency=True)
+
+
+def test_autobucket_transform_requires_fit_columns():
+    auto = AutoBucket(numeric_strategy="width").fit({"a": [1, 2], "b": [3, 4]})
+
+    with pytest.raises(InvalidBucketingError, match="missing columns"):
+        auto.transform({"a": [1, 2]})
+    with pytest.raises(InvalidBucketingError, match="unexpected columns"):
+        auto.transform({"a": [1, 2], "b": [3, 4], "c": [5, 6]})

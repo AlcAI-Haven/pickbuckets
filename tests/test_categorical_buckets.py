@@ -20,10 +20,26 @@ def test_rare_category_supports_ratio_threshold():
     assert bucket.transform(["a", "b", "c"]) == ["a", "Other", "Other"]
 
 
+def test_rare_category_rejects_bool_min_frequency():
+    with pytest.raises(InvalidBucketingError):
+        RareCategoryBucket(min_frequency=True)
+
+
 def test_rare_category_supports_integer_and_mixed_object_values():
     bucket = RareCategoryBucket(min_frequency=2).fit([1, 1, "x", "y", "y"])
 
     assert bucket.transform([1, "x", "y", 2]) == ["1", "Other", "y", "Other"]
+
+
+def test_rare_category_counts_frequent_category_that_matches_other_label():
+    bucket = RareCategoryBucket(
+        min_frequency=2,
+        other_label="Other",
+    ).fit(["Other", "Other", "A"])
+
+    assert bucket.rules_.labels == ["Other"]
+    assert bucket.summary()["fit_stats"]["n_frequent"] == 1
+    assert bucket.summary()["output_counts"] == [{"label": "Other", "count": 3}]
 
 
 def test_rare_category_can_error_for_unknown_categories():

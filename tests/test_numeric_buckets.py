@@ -11,7 +11,7 @@ from pickbuckets import (
 
 
 @pytest.mark.parametrize("bucket_cls", [EqualWidthBucket, EqualFrequencyBucket])
-@pytest.mark.parametrize("n_bins", [0, -1, 1.5, "3"])
+@pytest.mark.parametrize("n_bins", [0, -1, True, 1.5, "3"])
 def test_numeric_bucketers_reject_invalid_n_bins(bucket_cls, n_bins):
     with pytest.raises(InvalidBucketingError):
         bucket_cls(n_bins=n_bins)
@@ -35,7 +35,7 @@ def test_equal_width_interval_labels_and_round_trip():
     restored = EqualWidthBucket.from_json(bucket.to_json())
 
     assert restored.transform([0, 5, 10]) == bucket.transform([0, 5, 10])
-    assert bucket.to_dict()["schema_version"] == "1.0"
+    assert bucket.to_dict()["schema_version"].startswith("1.")
 
 
 def test_equal_width_rejects_empty_input():
@@ -67,10 +67,22 @@ def test_equal_frequency_duplicate_edges_raise_by_default():
         EqualFrequencyBucket(n_bins=4).fit([1, 1, 1, 1])
 
 
+def test_equal_frequency_rejects_invalid_duplicates_policy():
+    with pytest.raises(InvalidBucketingError):
+        EqualFrequencyBucket(n_bins=4, duplicates=["drop"])
+
+
 def test_equal_frequency_duplicate_edges_can_drop():
     bucket = EqualFrequencyBucket(n_bins=4, duplicates="drop").fit([1, 1, 1, 1, 2, 3])
 
     assert bucket.rules_.fit_stats["actual_bins"] < 4
+
+
+def test_equal_frequency_duplicate_edges_drop_to_single_constant_bin():
+    bucket = EqualFrequencyBucket(n_bins=4, duplicates="drop").fit([1, 1, 1, 1])
+
+    assert bucket.rules_.edges == [1.0, 1.0]
+    assert bucket.transform([0, 1, 2]) == [0, 0, 0]
 
 
 def test_custom_boundaries_validate_labels():
@@ -106,6 +118,14 @@ def test_custom_boundaries_can_error_on_out_of_range():
 
     with pytest.raises(BoundaryError):
         bucket.transform([-1])
+
+
+def test_custom_boundaries_validate_fit_values_when_erroring_on_boundaries():
+    with pytest.raises(InvalidBucketingError, match="outside custom edges"):
+        CustomBoundaryBucket(
+            edges=[0, 10],
+            boundary_strategy="error",
+        ).fit([-1, 5])
 
 
 def test_custom_boundary_round_trip():

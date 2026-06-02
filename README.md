@@ -19,7 +19,7 @@ print(bucket.to_json())
 
 ## Status
 
-The v0.2 developer-experience release is implemented:
+The v0.3 robustness release is implemented:
 
 - one unified `Rule` model for numeric and categorical buckets
 - readable dict/JSON serialization with schema and package versions
@@ -31,6 +31,8 @@ The v0.2 developer-experience release is implemented:
 - scikit-learn-compatible transformers in `pickbuckets.sklearn`
 - typed exceptions and configurable missing, boundary, and unknown-category
   policies
+- most-frequent missing replacement, explicit underflow/overflow buckets, and
+  unknown-category `other`, `missing`, `keep`, and `error` strategies
 - tests, lint, typing, build checks, and a no-heavy-dependencies CI gate
 
 ## Install
@@ -189,7 +191,9 @@ print(auto.summary())
 ```
 
 Plain `dict[str, list]`, pandas `DataFrame`, Polars `DataFrame`, and Polars
-`LazyFrame` inputs return the same container type on transform.
+`LazyFrame` inputs return the same container type on transform. Transform input
+must contain the same column names fitted by the bucketer; missing or unexpected
+columns raise `InvalidBucketingError`.
 
 ## pandas
 
@@ -239,6 +243,11 @@ Rules configured with an `error` strategy for missing values, numeric
 boundaries, or unknown categories require eager evaluation so the library can
 raise the same typed exceptions as the pure-Python runtime.
 
+Polars supports `unknown_category_strategy="keep"` when categorical outputs stay
+string-typed. Mixed-type outputs with `keep` are rejected because Polars cannot
+preserve arbitrary kept unknown strings and non-string labels in one native
+expression.
+
 ## scikit-learn
 
 Install with `pickbuckets[sklearn]`. The sklearn adapters live in
@@ -263,6 +272,9 @@ pipe.fit(X, y)
 The adapters expose `get_params`, `set_params`, `fit_transform`,
 `get_feature_names_out`, and fitted portable `Rule` objects on `rules_`.
 Transforms return integer code arrays suitable for downstream estimators.
+Feature names must match the fit-time order. The sklearn adapters do not support
+`unknown_category_strategy="keep"` because transforms must return stable integer
+code arrays.
 
 See [docs/integrations.md](docs/integrations.md) for the phase 2 integration
 details and CI coverage notes.
@@ -275,6 +287,9 @@ Missing values:
 
 - `missing_strategy="separate"` maps missing values to `missing_label`
   (default: `"Missing"`).
+- `missing_strategy="most_frequent"` maps missing values to the most frequent
+  fitted output label. The learned replacement is stored on the rule as
+  `missing_label`.
 - `missing_strategy="propagate"` returns the original missing value.
 - `missing_strategy="error"` raises `MissingValueError`.
 
@@ -282,14 +297,20 @@ Numeric boundaries:
 
 - `boundary_strategy="clip"` maps values below/above the fitted range to the
   first/last label.
+- `boundary_strategy="underflow_overflow"` maps values below/above the fitted
+  range to `underflow_label` and `overflow_label`.
 - `boundary_strategy="error"` raises `BoundaryError`.
 
 Unknown categories:
 
 - `unknown_category_strategy="other"` maps unseen categories to `other_label`.
+- `unknown_category_strategy="missing"` maps unseen categories to
+  `missing_label`.
+- `unknown_category_strategy="keep"` returns unseen categories as strings.
 - `unknown_category_strategy="error"` raises `UnknownCategoryError`.
 
-Malformed numeric transform values raise `InvalidBucketingError`.
+Malformed numeric transform values raise `InvalidBucketingError`. Data-related
+errors include the fitted feature name when one is available.
 
 ## Rule Portability
 
@@ -323,6 +344,7 @@ Rules include:
 - numeric `edges` or categorical `category_mapping`
 - output `labels`
 - active missing, boundary, and unknown-category policies
+- underflow and overflow labels
 - `fit_stats`
 
 Loading a rule with an unsupported major schema version or an unknown policy

@@ -14,12 +14,23 @@ from pickbuckets.adapters.frames import (
     pandas_index,
     require_frame,
 )
+from pickbuckets.core._utils import (
+    validate_boundary_strategy,
+    validate_min_frequency,
+    validate_missing_strategy,
+    validate_unknown_category_strategy,
+)
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.core.categorical import RareCategoryBucket
 from pickbuckets.core.equal_frequency import EqualFrequencyBucket
 from pickbuckets.core.equal_width import EqualWidthBucket
 from pickbuckets.exceptions import InvalidBucketingError, NotFittedError
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import (
+    BoundaryStrategy,
+    MissingStrategy,
+    UnknownCategoryStrategy,
+)
 from pickbuckets.runtime import apply_rule
 
 
@@ -42,6 +53,13 @@ class AutoBucket:
         min_frequency: int | float = 0.01,
         duplicates: str = "drop",
         labels: str = "ordinal",
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
+        unknown_category_strategy: UnknownCategoryStrategy = "other",
+        other_label: Any = "Other",
         overrides: dict[Hashable, BaseBucket] | None = None,
         ignore_unsupported: bool = False,
     ) -> None:
@@ -51,12 +69,23 @@ class AutoBucket:
             )
         if categorical_strategy not in {"rare"}:
             raise InvalidBucketingError("categorical_strategy must be 'rare'.")
+        validate_min_frequency(min_frequency)
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
+        validate_unknown_category_strategy(unknown_category_strategy)
         self.numeric_strategy = numeric_strategy
         self.categorical_strategy = categorical_strategy
         self.n_bins = n_bins
         self.min_frequency = min_frequency
         self.duplicates = duplicates
         self.labels = labels
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
+        self.unknown_category_strategy = unknown_category_strategy
+        self.other_label = other_label
         self.overrides = overrides
         self.ignore_unsupported = ignore_unsupported
 
@@ -64,24 +93,52 @@ class AutoBucket:
 
     def _make_numeric(self) -> BaseBucket:
         if self.numeric_strategy == "width":
-            return EqualWidthBucket(n_bins=self.n_bins, labels=self.labels)
+            return EqualWidthBucket(
+                n_bins=self.n_bins,
+                labels=self.labels,
+                missing_strategy=self.missing_strategy,
+                missing_label=self.missing_label,
+                boundary_strategy=self.boundary_strategy,
+                underflow_label=self.underflow_label,
+                overflow_label=self.overflow_label,
+            )
         return EqualFrequencyBucket(
-            n_bins=self.n_bins, labels=self.labels, duplicates=self.duplicates
+            n_bins=self.n_bins,
+            labels=self.labels,
+            duplicates=self.duplicates,
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
         )
 
     def _make_categorical(self) -> BaseBucket:
-        return RareCategoryBucket(min_frequency=self.min_frequency)
+        return RareCategoryBucket(
+            min_frequency=self.min_frequency,
+            other_label=self.other_label,
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            unknown_category_strategy=self.unknown_category_strategy,
+        )
 
     def fit(self, frame: Any, y: Any = None) -> AutoBucket:
         kind = require_frame(frame)
         names = column_names(frame, kind)
+        _validate_column_names(names)
         overrides = self.overrides or {}
+        _validate_overrides(overrides, names)
 
         rules: dict[Hashable, Rule] = {}
         skipped: list[Hashable] = []
         for name in names:
             if name in overrides:
                 bucketer = overrides[name]
+                if not isinstance(bucketer, BaseBucket):
+                    raise InvalidBucketingError(
+                        f"Override for column {name!r} must be a pickbuckets "
+                        "bucketer."
+                    )
             else:
                 col_kind = column_kind(frame, kind, name)
                 if col_kind == "numeric":
@@ -116,6 +173,9 @@ class AutoBucket:
             raise NotFittedError("AutoBucket must be fitted before transform().")
         kind = require_frame(frame)
         names = column_names(frame, kind)
+        if len(set(names)) != len(names):
+            raise InvalidBucketingError("AutoBucket requires unique column names.")
+        _validate_transform_columns(self.feature_names_in_, names)
 
         if kind in (FrameKind.POLARS, FrameKind.POLARS_LAZY):
             return self._transform_polars(frame, kind, names)
@@ -201,3 +261,42 @@ def _with_feature_name(rule: Rule, name: str) -> Rule:
     payload = rule.to_dict()
     payload["feature_name"] = name
     return Rule.from_dict(payload)
+
+
+def _validate_column_names(names: list[Hashable]) -> None:
+    if not names:
+        raise InvalidBucketingError("AutoBucket requires at least one column.")
+    if len(set(names)) != len(names):
+        raise InvalidBucketingError("AutoBucket requires unique column names.")
+
+
+def _validate_transform_columns(
+    expected: list[Hashable],
+    received: list[Hashable],
+) -> None:
+    expected_set = set(expected)
+    received_set = set(received)
+    missing = [name for name in expected if name not in received_set]
+    extra = [name for name in received if name not in expected_set]
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing columns: {missing!r}")
+        if extra:
+            details.append(f"unexpected columns: {extra!r}")
+        raise InvalidBucketingError(
+            "AutoBucket transform columns must match fit columns ("
+            + "; ".join(details)
+            + ")."
+        )
+
+
+def _validate_overrides(
+    overrides: dict[Hashable, BaseBucket],
+    names: list[Hashable],
+) -> None:
+    unknown = [name for name in overrides if name not in set(names)]
+    if unknown:
+        raise InvalidBucketingError(
+            f"Overrides refer to unknown columns: {unknown!r}."
+        )

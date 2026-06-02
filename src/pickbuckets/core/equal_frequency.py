@@ -3,7 +3,16 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from pickbuckets.core._utils import make_labels, numeric_values, validate_n_bins
+from pickbuckets.core._utils import (
+    make_labels,
+    missing_count,
+    most_frequent_label,
+    numeric_bin_counts,
+    numeric_values,
+    validate_boundary_strategy,
+    validate_missing_strategy,
+    validate_n_bins,
+)
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.exceptions import InvalidBucketingError
 from pickbuckets.rules import Rule
@@ -21,9 +30,13 @@ class EqualFrequencyBucket(BaseBucket):
         missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
         boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
     ) -> None:
         validate_n_bins(n_bins)
-        if duplicates not in {"raise", "drop"}:
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
+        if not isinstance(duplicates, str) or duplicates not in {"raise", "drop"}:
             raise InvalidBucketingError("duplicates must be either 'raise' or 'drop'.")
         self.n_bins = n_bins
         self.labels = labels
@@ -32,9 +45,12 @@ class EqualFrequencyBucket(BaseBucket):
         self.missing_strategy = missing_strategy
         self.missing_label = missing_label
         self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
 
     def fit(self, values: Iterable[Any]) -> EqualFrequencyBucket:
-        clean = sorted(numeric_values(values))
+        raw = list(values)
+        clean = sorted(numeric_values(raw))
         edges = [
             _quantile(clean, index / self.n_bins)
             for index in range(self.n_bins + 1)
@@ -46,23 +62,39 @@ class EqualFrequencyBucket(BaseBucket):
                     "Duplicate quantile edges produced; use duplicates='drop' to keep "
                     "the unique intervals."
                 )
-            edges = deduped
+            edges = deduped if len(deduped) > 1 else [deduped[0], deduped[0]]
         if len(edges) < 2:
             raise InvalidBucketingError("Could not produce at least one interval.")
+        labels = make_labels(edges, self.labels)
+        bin_counts = numeric_bin_counts(
+            clean,
+            edges,
+            labels,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
+        )
+        missing_label = self.missing_label
+        if self.missing_strategy == "most_frequent":
+            missing_label = most_frequent_label(bin_counts)
 
         self.rules_ = Rule(
             kind="numeric",
             feature_name=self.feature_name,
             edges=edges,
-            labels=make_labels(edges, self.labels),
+            labels=labels,
             missing_strategy=self.missing_strategy,
-            missing_label=self.missing_label,
+            missing_label=missing_label,
             boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
             fit_stats={
                 "algorithm": "equal_frequency",
                 "n_observations": len(clean),
+                "n_missing": missing_count(raw),
                 "requested_bins": self.n_bins,
                 "actual_bins": len(edges) - 1,
+                "bin_counts": bin_counts,
             },
         )
         return self

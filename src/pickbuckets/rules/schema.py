@@ -10,9 +10,9 @@ from pickbuckets.exceptions import RuleSchemaError
 
 RuleKind = Literal["numeric", "categorical"]
 ClosedSide = Literal["left"]
-MissingStrategy = Literal["separate", "error", "propagate"]
-BoundaryStrategy = Literal["clip", "error"]
-UnknownCategoryStrategy = Literal["other", "error"]
+MissingStrategy = Literal["separate", "most_frequent", "error", "propagate"]
+BoundaryStrategy = Literal["clip", "underflow_overflow", "error"]
+UnknownCategoryStrategy = Literal["other", "missing", "error", "keep"]
 
 
 @dataclass(frozen=True)
@@ -28,28 +28,45 @@ class Rule:
     missing_strategy: MissingStrategy = "separate"
     missing_label: Any = "Missing"
     boundary_strategy: BoundaryStrategy = "clip"
+    underflow_label: Any = "Underflow"
+    overflow_label: Any = "Overflow"
     unknown_category_strategy: UnknownCategoryStrategy = "other"
     unknown_label: Any = "Other"
     fit_stats: dict[str, Any] = field(default_factory=dict)
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     package_version: str = __version__
 
+    CURRENT_SCHEMA_VERSION: ClassVar[str] = "1.1"
     SUPPORTED_SCHEMA_MAJOR: ClassVar[str] = "1"
 
     def __post_init__(self) -> None:
-        if self.kind not in {"numeric", "categorical"}:
+        if (
+            not isinstance(self.kind, str)
+            or self.kind not in {"numeric", "categorical"}
+        ):
             raise RuleSchemaError(f"Unsupported rule kind: {self.kind!r}")
-        if self.closed != "left":
+        if not isinstance(self.closed, str) or self.closed != "left":
             raise RuleSchemaError(f"Unsupported closed-side policy: {self.closed!r}")
-        if self.missing_strategy not in {"separate", "error", "propagate"}:
+        if (
+            not isinstance(self.missing_strategy, str)
+            or self.missing_strategy
+            not in {"separate", "most_frequent", "error", "propagate"}
+        ):
             raise RuleSchemaError(
                 f"Unsupported missing strategy: {self.missing_strategy!r}"
             )
-        if self.boundary_strategy not in {"clip", "error"}:
+        if (
+            not isinstance(self.boundary_strategy, str)
+            or self.boundary_strategy not in {"clip", "underflow_overflow", "error"}
+        ):
             raise RuleSchemaError(
                 f"Unsupported boundary strategy: {self.boundary_strategy!r}"
             )
-        if self.unknown_category_strategy not in {"other", "error"}:
+        if (
+            not isinstance(self.unknown_category_strategy, str)
+            or self.unknown_category_strategy
+            not in {"other", "missing", "error", "keep"}
+        ):
             raise RuleSchemaError(
                 "Unsupported unknown-category strategy: "
                 f"{self.unknown_category_strategy!r}"
@@ -62,6 +79,37 @@ class Rule:
         if self.kind == "categorical":
             if self.category_mapping is None:
                 raise RuleSchemaError("Categorical rules require a category mapping.")
+            mapping = _normalize_category_mapping(self.category_mapping)
+            object.__setattr__(self, "category_mapping", mapping)
+            if not self.labels:
+                raise RuleSchemaError("Categorical rules require at least one label.")
+            for category, label in mapping.items():
+                if label not in self.labels:
+                    raise RuleSchemaError(
+                        f"Categorical mapping for {category!r} uses label "
+                        f"{label!r}, which is not present in labels."
+                    )
+            if (
+                self.unknown_category_strategy == "other"
+                and self.unknown_label not in self.labels
+            ):
+                raise RuleSchemaError(
+                    "unknown_label must be present in labels when "
+                    "unknown_category_strategy='other'."
+                )
+        possible_missing_labels = list(self.labels)
+        if self.kind == "numeric" and self.boundary_strategy == "underflow_overflow":
+            possible_missing_labels.extend(
+                [self.underflow_label, self.overflow_label]
+            )
+        if (
+            self.missing_strategy == "most_frequent"
+            and self.missing_label not in possible_missing_labels
+        ):
+            raise RuleSchemaError(
+                "missing_strategy='most_frequent' requires missing_label to be one "
+                "of the fitted labels."
+            )
 
     def __repr__(self) -> str:
         name = f" feature={self.feature_name!r}" if self.feature_name else ""
@@ -89,6 +137,8 @@ class Rule:
             "missing_strategy": self.missing_strategy,
             "missing_label": self.missing_label,
             "boundary_strategy": self.boundary_strategy,
+            "underflow_label": self.underflow_label,
+            "overflow_label": self.overflow_label,
             "unknown_category_strategy": self.unknown_category_strategy,
             "unknown_label": self.unknown_label,
             "fit_stats": self.fit_stats,
@@ -113,10 +163,12 @@ class Rule:
             missing_strategy=data.get("missing_strategy", "separate"),
             missing_label=data.get("missing_label", "Missing"),
             boundary_strategy=data.get("boundary_strategy", "clip"),
+            underflow_label=data.get("underflow_label", "Underflow"),
+            overflow_label=data.get("overflow_label", "Overflow"),
             unknown_category_strategy=data.get("unknown_category_strategy", "other"),
             unknown_label=data.get("unknown_label", "Other"),
             fit_stats=data.get("fit_stats", {}),
-            schema_version=schema_version,
+            schema_version=cls.CURRENT_SCHEMA_VERSION,
             package_version=data.get("package_version", __version__),
         )
 
@@ -151,6 +203,18 @@ def _normalize_edges(edges: list[Any] | None) -> list[float]:
     elif any(left >= right for left, right in zip(normalized, normalized[1:])):
         raise RuleSchemaError("Numeric edges must be sorted and unique.")
 
+    return normalized
+
+
+def _normalize_category_mapping(mapping: dict[Any, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in mapping.items():
+        text = str(key)
+        if text in normalized and normalized[text] != value:
+            raise RuleSchemaError(
+                f"Category key {text!r} is duplicated after string conversion."
+            )
+        normalized[text] = value
     return normalized
 
 

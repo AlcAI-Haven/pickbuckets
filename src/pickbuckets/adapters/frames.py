@@ -140,4 +140,25 @@ def require_frame(obj: Any) -> FrameKind:
             "AutoBucket expects a pandas/Polars DataFrame, a Polars LazyFrame, "
             "or a mapping of column name to values."
         )
+    if kind is FrameKind.DICT:
+        _validate_mapping_frame(obj)
     return kind
+
+
+def _validate_mapping_frame(obj: Mapping[Any, Any]) -> None:
+    lengths: list[int] = []
+    for name, values in obj.items():
+        if isinstance(values, (str, bytes)):
+            raise InvalidBucketingError(
+                f"Column {name!r} must be a sequence of values, not a string."
+            )
+        try:
+            lengths.append(len(values))
+        except TypeError as exc:
+            raise InvalidBucketingError(
+                f"Column {name!r} must be a sized sequence of values."
+            ) from exc
+    if len(set(lengths)) > 1:
+        raise InvalidBucketingError(
+            "All columns in a mapping frame must have the same length."
+        )

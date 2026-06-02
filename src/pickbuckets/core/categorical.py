@@ -4,6 +4,14 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
+from pickbuckets.core._utils import (
+    label_counts,
+    missing_count,
+    most_frequent_label,
+    validate_min_frequency,
+    validate_missing_strategy,
+    validate_unknown_category_strategy,
+)
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.exceptions import InvalidBucketingError
 from pickbuckets.rules import Rule
@@ -22,14 +30,9 @@ class RareCategoryBucket(BaseBucket):
         missing_label: Any = "Missing",
         unknown_category_strategy: UnknownCategoryStrategy = "other",
     ) -> None:
-        if not isinstance(min_frequency, (int, float)) or min_frequency <= 0:
-            raise InvalidBucketingError(
-                "min_frequency must be a positive count or ratio."
-            )
-        if isinstance(min_frequency, float) and min_frequency > 1:
-            raise InvalidBucketingError(
-                "Float min_frequency must be in the range (0, 1]."
-            )
+        validate_min_frequency(min_frequency)
+        validate_missing_strategy(missing_strategy)
+        validate_unknown_category_strategy(unknown_category_strategy)
         self.min_frequency = min_frequency
         self.other_label = other_label
         self.feature_name = feature_name
@@ -38,7 +41,8 @@ class RareCategoryBucket(BaseBucket):
         self.unknown_category_strategy = unknown_category_strategy
 
     def fit(self, values: Iterable[Any]) -> RareCategoryBucket:
-        seen = [value for value in values if not is_missing(value)]
+        raw = list(values)
+        seen = [value for value in raw if not is_missing(value)]
         if not seen:
             raise InvalidBucketingError(
                 "At least one non-missing category is required."
@@ -55,9 +59,16 @@ class RareCategoryBucket(BaseBucket):
             for category, count in sorted(counts.items())
         }
         frequent = [
-            category for category, label in mapping.items() if label != self.other_label
+            category for category, count in sorted(counts.items()) if count >= threshold
         ]
-        labels = frequent + [self.other_label]
+        labels = list(frequent)
+        if self.other_label not in labels:
+            labels.append(self.other_label)
+        mapped_seen = [mapping[str(value)] for value in seen]
+        output_counts = label_counts(mapped_seen, labels)
+        missing_label = self.missing_label
+        if self.missing_strategy == "most_frequent":
+            missing_label = most_frequent_label(output_counts)
 
         self.rules_ = Rule(
             kind="categorical",
@@ -65,15 +76,18 @@ class RareCategoryBucket(BaseBucket):
             category_mapping=mapping,
             labels=labels,
             missing_strategy=self.missing_strategy,
-            missing_label=self.missing_label,
+            missing_label=missing_label,
             unknown_category_strategy=self.unknown_category_strategy,
             unknown_label=self.other_label,
             fit_stats={
                 "algorithm": "rare_category",
                 "n_observations": len(seen),
+                "n_missing": missing_count(raw),
                 "n_categories": len(counts),
                 "n_frequent": len(frequent),
                 "min_frequency": self.min_frequency,
+                "category_counts": dict(sorted(counts.items())),
+                "output_counts": output_counts,
             },
         )
         return self

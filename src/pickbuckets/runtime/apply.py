@@ -41,12 +41,21 @@ def is_missing(value: Any) -> bool:
     return False
 
 
+def _context(rule: Rule) -> str:
+    if rule.feature_name is None:
+        return ""
+    return f"Feature {rule.feature_name!r}: "
+
+
 def _handle_missing(rule: Rule, value: Any) -> Any:
-    if rule.missing_strategy == "separate":
+    if rule.missing_strategy in {"separate", "most_frequent"}:
         return rule.missing_label
     if rule.missing_strategy == "propagate":
         return value
-    raise MissingValueError("Missing value encountered and missing_strategy='error'.")
+    raise MissingValueError(
+        f"{_context(rule)}Missing value encountered and "
+        "missing_strategy='error'."
+    )
 
 
 def _apply_numeric(rule: Rule, value: Any) -> Any:
@@ -57,7 +66,10 @@ def _apply_numeric(rule: Rule, value: Any) -> Any:
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        message = f"Non-numeric value encountered during transform: {value!r}"
+        message = (
+            f"{_context(rule)}Non-numeric value encountered during "
+            f"transform: {value!r}"
+        )
         raise InvalidBucketingError(message) from exc
     if isnan(number):
         return _handle_missing(rule, value)
@@ -66,11 +78,19 @@ def _apply_numeric(rule: Rule, value: Any) -> Any:
 
     if number < first:
         if rule.boundary_strategy == "error":
-            raise BoundaryError(f"Value {value!r} is below the first edge {first!r}.")
+            raise BoundaryError(
+                f"{_context(rule)}Value {value!r} is below the first edge {first!r}."
+            )
+        if rule.boundary_strategy == "underflow_overflow":
+            return rule.underflow_label
         return rule.labels[0]
     if number > last:
         if rule.boundary_strategy == "error":
-            raise BoundaryError(f"Value {value!r} is above the final edge {last!r}.")
+            raise BoundaryError(
+                f"{_context(rule)}Value {value!r} is above the final edge {last!r}."
+            )
+        if rule.boundary_strategy == "underflow_overflow":
+            return rule.overflow_label
         return rule.labels[-1]
 
     for index, (left, right) in enumerate(zip(edges, edges[1:])):
@@ -79,7 +99,9 @@ def _apply_numeric(rule: Rule, value: Any) -> Any:
             return rule.labels[index]
 
     if rule.boundary_strategy == "error":
-        raise BoundaryError(f"Value {value!r} did not fit any interval.")
+        raise BoundaryError(
+            f"{_context(rule)}Value {value!r} did not fit any interval."
+        )
     return rule.labels[-1]
 
 
@@ -93,4 +115,8 @@ def _apply_categorical(rule: Rule, value: Any) -> Any:
         return mapping[key]
     if rule.unknown_category_strategy == "other":
         return rule.unknown_label
-    raise UnknownCategoryError(f"Unknown category: {value!r}")
+    if rule.unknown_category_strategy == "missing":
+        return rule.missing_label
+    if rule.unknown_category_strategy == "keep":
+        return key
+    raise UnknownCategoryError(f"{_context(rule)}Unknown category: {value!r}")

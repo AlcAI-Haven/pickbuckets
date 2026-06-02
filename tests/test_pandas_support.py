@@ -62,3 +62,19 @@ def test_unsupported_datetime_column_requires_ignore_flag():
     assert auto.skipped_columns_ == ["when"]
     out = auto.transform(df)
     assert list(out["when"]) == list(df["when"])
+
+
+def test_duplicate_pandas_columns_are_rejected():
+    df = pd.DataFrame([[1, 2], [3, 4]], columns=["x", "x"])
+
+    with pytest.raises(InvalidBucketingError, match="unique column names"):
+        AutoBucket().fit(df)
+
+
+def test_duplicate_pandas_columns_are_rejected_on_transform():
+    fit_df = pd.DataFrame({"x": [1, 2]})
+    transform_df = pd.DataFrame([[1, 2], [3, 4]], columns=["x", "x"])
+    auto = AutoBucket(numeric_strategy="width").fit(fit_df)
+
+    with pytest.raises(InvalidBucketingError, match="unique column names"):
+        auto.transform(transform_df)

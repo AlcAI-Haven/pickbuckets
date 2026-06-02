@@ -65,15 +65,24 @@ class BaseBucket:
             "kind": rule.kind,
             "labels": list(rule.labels),
             "missing_strategy": rule.missing_strategy,
+            "missing_label": rule.missing_label,
             "fit_stats": dict(rule.fit_stats),
         }
         if rule.kind == "numeric":
             info["n_bins"] = len(rule.labels)
             info["edges"] = list(rule.edges or [])
             info["boundary_strategy"] = rule.boundary_strategy
+            if rule.boundary_strategy == "underflow_overflow":
+                info["underflow_label"] = rule.underflow_label
+                info["overflow_label"] = rule.overflow_label
+            if "bin_counts" in rule.fit_stats:
+                info["bin_counts"] = list(rule.fit_stats["bin_counts"])
         else:
             info["n_categories"] = len(rule.category_mapping or {})
             info["unknown_category_strategy"] = rule.unknown_category_strategy
+            info["unknown_label"] = rule.unknown_label
+            if "output_counts" in rule.fit_stats:
+                info["output_counts"] = list(rule.fit_stats["output_counts"])
         return info
 
     def to_dict(self) -> dict[str, Any]:

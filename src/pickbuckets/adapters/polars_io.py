@@ -21,13 +21,20 @@ def _pl() -> Any:
 
 def _label_pool(rule: Rule) -> list[Any]:
     pool: list[Any] = list(rule.labels)
-    if rule.missing_strategy == "separate":
+    if rule.missing_strategy in {"separate", "most_frequent"}:
         pool.append(rule.missing_label)
-    if rule.kind == "categorical":
+    if rule.kind == "numeric":
+        if rule.boundary_strategy == "underflow_overflow":
+            pool.extend([rule.underflow_label, rule.overflow_label])
+    else:
         if rule.category_mapping:
             pool.extend(rule.category_mapping.values())
         if rule.unknown_category_strategy == "other":
             pool.append(rule.unknown_label)
+        if rule.unknown_category_strategy == "missing":
+            pool.append(rule.missing_label)
+        if rule.unknown_category_strategy == "keep":
+            pool.append("")
     return pool
 
 
@@ -55,6 +62,12 @@ def rule_raises(rule: Rule) -> bool:
     )
 
 
+def _context(rule: Rule) -> str:
+    if rule.feature_name is None:
+        return ""
+    return f"Feature {rule.feature_name!r}: "
+
+
 def numeric_expr(rule: Rule, col: Any, *, use_object_dtype: bool) -> Any:
     pl = _pl()
     edges = rule.edges or []
@@ -69,17 +82,32 @@ def numeric_expr(rule: Rule, col: Any, *, use_object_dtype: bool) -> Any:
     for index in range(1, len(labels) - 1):
         chain = chain.when(col < edges[index + 1]).then(lit(labels[index]))
     mapped = chain.otherwise(lit(labels[-1]))
+    if rule.boundary_strategy == "underflow_overflow":
+        mapped = (
+            pl.when(col < edges[0])
+            .then(lit(rule.underflow_label))
+            .when(col > edges[-1])
+            .then(lit(rule.overflow_label))
+            .otherwise(mapped)
+        )
 
     # Dtype-agnostic missing mask. Polars treats ``NaN == NaN`` as True, so the
     # IEEE ``col != col`` trick fails; cast to Float64 (non-strict) and use
     # ``is_nan`` instead, which works on a bare Expr without knowing the dtype.
     missing_mask = col.is_null() | col.cast(pl.Float64, strict=False).is_nan()
 
-    if rule.missing_strategy == "separate":
+    if rule.missing_strategy in {"separate", "most_frequent"}:
         return pl.when(missing_mask).then(lit(rule.missing_label)).otherwise(mapped)
     if rule.missing_strategy == "propagate":
-        passthrough = col.cast(pl.Object) if use_object_dtype else col
-        return pl.when(missing_mask).then(passthrough).otherwise(mapped)
+        null_value = pl.lit(None, dtype=pl.Object) if use_object_dtype else pl.lit(None)
+        nan_value = lit(float("nan"))
+        return (
+            pl.when(col.is_null())
+            .then(null_value)
+            .when(col.cast(pl.Float64, strict=False).is_nan())
+            .then(nan_value)
+            .otherwise(mapped)
+        )
     return mapped  # error mode handled by pre-check
 
 
@@ -91,20 +119,55 @@ def categorical_expr(rule: Rule, col: Any, *, stringify: bool) -> Any:
         return _stringify(value) if stringify else value
 
     key = col.cast(pl.Utf8)
-    mapped = key.replace_strict(
-        list(mapping.keys()),
-        [out(value) for value in mapping.values()],
-        default=out(rule.unknown_label),
-    )
-    if rule.missing_strategy == "separate":
+    if stringify:
+        if rule.unknown_category_strategy == "keep":
+            raise PickBucketsError(
+                "Polars cannot preserve mixed-type categorical outputs with "
+                "unknown_category_strategy='keep'. Use string labels or choose "
+                "'other', 'missing', or 'error'."
+            )
+
+        def lit_obj(value: Any) -> Any:
+            return pl.lit(value, dtype=pl.Object)
+
+        if rule.unknown_category_strategy == "missing":
+            mapped = lit_obj(rule.missing_label)
+        else:
+            mapped = lit_obj(rule.unknown_label)
+        for category, value in mapping.items():
+            mapped = (
+                pl.when(key == category)
+                .then(lit_obj(value))
+                .otherwise(mapped)
+            )
+    else:
+        if rule.unknown_category_strategy == "keep":
+            unknown = key
+        elif rule.unknown_category_strategy == "missing":
+            unknown = pl.lit(out(rule.missing_label))
+        else:
+            unknown = pl.lit(out(rule.unknown_label))
+        mapped = key.replace_strict(
+            list(mapping.keys()),
+            [out(value) for value in mapping.values()],
+            default=unknown,
+        )
+    if rule.missing_strategy in {"separate", "most_frequent"}:
+        missing = (
+            pl.lit(rule.missing_label, dtype=pl.Object)
+            if stringify
+            else pl.lit(out(rule.missing_label))
+        )
         return (
             pl.when(col.is_null())
-            .then(pl.lit(out(rule.missing_label)))
+            .then(missing)
             .otherwise(mapped)
         )
     if rule.missing_strategy == "propagate":
-        passthrough = col.cast(pl.Utf8) if stringify else col
-        return pl.when(col.is_null()).then(passthrough).otherwise(mapped)
+        null_value = (
+            pl.lit(None, dtype=pl.Object) if stringify else pl.lit(None)
+        )
+        return pl.when(col.is_null()).then(null_value).otherwise(mapped)
     return mapped
 
 
@@ -128,7 +191,8 @@ def precheck_series(rule: Rule, series: Any) -> None:
             from pickbuckets.exceptions import MissingValueError
 
             raise MissingValueError(
-                "Missing value encountered and missing_strategy='error'."
+                f"{_context(rule)}Missing value encountered and "
+                "missing_strategy='error'."
             )
     if rule.kind == "numeric" and rule.boundary_strategy == "error":
         edges = rule.edges or []
@@ -139,7 +203,10 @@ def precheck_series(rule: Rule, series: Any) -> None:
             below = finite.min() < edges[0]
             above = finite.max() > edges[-1]
             if below or above:
-                raise BoundaryError("Value out of range and boundary_strategy='error'.")
+                raise BoundaryError(
+                    f"{_context(rule)}Value out of range and "
+                    "boundary_strategy='error'."
+                )
     if rule.kind == "categorical" and rule.unknown_category_strategy == "error":
         mapping = rule.category_mapping or {}
         known = set(mapping.keys())
@@ -148,7 +215,9 @@ def precheck_series(rule: Rule, series: Any) -> None:
         if unknown:
             from pickbuckets.exceptions import UnknownCategoryError
 
-            raise UnknownCategoryError(f"Unknown category: {unknown[0]!r}")
+            raise UnknownCategoryError(
+                f"{_context(rule)}Unknown category: {unknown[0]!r}"
+            )
 
 
 def apply_rule_polars(rule: Rule, series: Any) -> Any:
@@ -165,6 +234,7 @@ def apply_rule_polars(rule: Rule, series: Any) -> Any:
 def lazy_guard(rule: Rule) -> None:
     if rule_raises(rule):
         raise PickBucketsError(
-            "Rules using an 'error' strategy (missing/boundary/unknown) require "
-            "eager evaluation; collect the LazyFrame or use a non-raising strategy."
+            f"{_context(rule)}Rules using an 'error' strategy "
+            "(missing/boundary/unknown) require eager evaluation; collect the "
+            "LazyFrame or use a non-raising strategy."
         )

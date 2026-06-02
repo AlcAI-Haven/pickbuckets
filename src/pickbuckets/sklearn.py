@@ -17,12 +17,23 @@ from typing import Any
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from pickbuckets.core._utils import (
+    validate_boundary_strategy,
+    validate_min_frequency,
+    validate_missing_strategy,
+    validate_unknown_category_strategy,
+)
 from pickbuckets.core.categorical import RareCategoryBucket as _CoreRare
 from pickbuckets.core.custom_edges import CustomBoundaryBucket as _CoreCustom
 from pickbuckets.core.equal_frequency import EqualFrequencyBucket as _CoreEqFreq
 from pickbuckets.core.equal_width import EqualWidthBucket as _CoreEqWidth
 from pickbuckets.exceptions import InvalidBucketingError, NotFittedError
 from pickbuckets.rules import Rule
+from pickbuckets.rules.schema import (
+    BoundaryStrategy,
+    MissingStrategy,
+    UnknownCategoryStrategy,
+)
 from pickbuckets.runtime import apply_rule
 
 
@@ -45,14 +56,27 @@ def _as_columns(X: Any) -> tuple[list[list[Any]], list[str]]:
 
 def _ordinal_classes(rule: Rule) -> list[Any]:
     classes: list[Any] = list(rule.labels)
-    if rule.missing_strategy == "separate" and rule.missing_label not in classes:
+    if (
+        rule.missing_strategy in {"separate", "most_frequent"}
+        and rule.missing_label not in classes
+    ):
         classes.append(rule.missing_label)
+    if rule.boundary_strategy == "underflow_overflow":
+        for label in (rule.underflow_label, rule.overflow_label):
+            if label not in classes:
+                classes.append(label)
     if (
         rule.kind == "categorical"
         and rule.unknown_category_strategy == "other"
         and rule.unknown_label not in classes
     ):
         classes.append(rule.unknown_label)
+    if (
+        rule.kind == "categorical"
+        and rule.unknown_category_strategy == "missing"
+        and rule.missing_label not in classes
+    ):
+        classes.append(rule.missing_label)
     return classes
 
 
@@ -60,6 +84,24 @@ def _encode(rule: Rule, values: list[Any]) -> list[int]:
     code = {label: index for index, label in enumerate(_ordinal_classes(rule))}
     applied = apply_rule(rule, values)
     return [code.get(label, len(code)) for label in applied]
+
+
+def _validate_feature_names(expected: Any, received: list[str]) -> None:
+    expected_list = [str(name) for name in expected]
+    if received != expected_list:
+        raise ValueError(
+            f"Feature names must match fit order; expected {expected_list!r}, "
+            f"got {received!r}."
+        )
+
+
+def _validate_sklearn_unknown_strategy(strategy: UnknownCategoryStrategy) -> None:
+    validate_unknown_category_strategy(strategy)
+    if strategy == "keep":
+        raise InvalidBucketingError(
+            "unknown_category_strategy='keep' is not supported by sklearn "
+            "adapters because they must return stable integer code arrays."
+        )
 
 
 class _BaseSklearnBucket(TransformerMixin, BaseEstimator):
@@ -88,11 +130,12 @@ class _BaseSklearnBucket(TransformerMixin, BaseEstimator):
     def transform(self, X: Any) -> Any:
         if not hasattr(self, "rules_"):
             raise NotFittedError("This estimator is not fitted yet.")
-        columns, _ = _as_columns(X)
+        columns, names = _as_columns(X)
         if len(columns) != self.n_features_in_:
             raise ValueError(
                 f"X has {len(columns)} features, expected {self.n_features_in_}."
             )
+        _validate_feature_names(self.feature_names_in_, names)
         encoded = [_encode(rule, column) for rule, column in zip(self.rules_, columns)]
         return np.asarray(encoded, dtype=float).T
 
@@ -100,45 +143,140 @@ class _BaseSklearnBucket(TransformerMixin, BaseEstimator):
         if not hasattr(self, "rules_"):
             raise NotFittedError("This estimator is not fitted yet.")
         if input_features is not None:
-            return np.asarray([str(name) for name in input_features], dtype=object)
+            names = [str(name) for name in input_features]
+            _validate_feature_names(self.feature_names_in_, names)
+            return np.asarray(names, dtype=object)
         return np.asarray(
             [str(rule.feature_name) for rule in self.rules_], dtype=object
         )
 
 
 class EqualWidthBucket(_BaseSklearnBucket):
-    def __init__(self, n_bins: int = 5) -> None:
+    def __init__(
+        self,
+        n_bins: int = 5,
+        *,
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
+    ) -> None:
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
         self.n_bins = n_bins
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
 
     def _make_core(self) -> Any:
-        return _CoreEqWidth(n_bins=self.n_bins, labels="ordinal")
+        return _CoreEqWidth(
+            n_bins=self.n_bins,
+            labels="ordinal",
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
+        )
 
 
 class EqualFrequencyBucket(_BaseSklearnBucket):
-    def __init__(self, n_bins: int = 5, duplicates: str = "drop") -> None:
+    def __init__(
+        self,
+        n_bins: int = 5,
+        duplicates: str = "drop",
+        *,
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
+    ) -> None:
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
         self.n_bins = n_bins
         self.duplicates = duplicates
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
 
     def _make_core(self) -> Any:
         return _CoreEqFreq(
-            n_bins=self.n_bins, labels="ordinal", duplicates=self.duplicates
+            n_bins=self.n_bins,
+            labels="ordinal",
+            duplicates=self.duplicates,
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
         )
 
 
 class CustomBoundaryBucket(_BaseSklearnBucket):
-    def __init__(self, edges: Any) -> None:
+    def __init__(
+        self,
+        edges: Any,
+        *,
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
+    ) -> None:
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
         self.edges = edges
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
 
     def _make_core(self) -> Any:
-        return _CoreCustom(edges=self.edges, labels="ordinal")
+        return _CoreCustom(
+            edges=self.edges,
+            labels="ordinal",
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
+        )
 
 
 class RareCategoryBucket(_BaseSklearnBucket):
-    def __init__(self, min_frequency: int | float = 0.01) -> None:
+    def __init__(
+        self,
+        min_frequency: int | float = 0.01,
+        *,
+        other_label: Any = "Other",
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        unknown_category_strategy: UnknownCategoryStrategy = "other",
+    ) -> None:
+        validate_min_frequency(min_frequency)
+        validate_missing_strategy(missing_strategy)
+        _validate_sklearn_unknown_strategy(unknown_category_strategy)
         self.min_frequency = min_frequency
+        self.other_label = other_label
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.unknown_category_strategy = unknown_category_strategy
 
     def _make_core(self) -> Any:
-        return _CoreRare(min_frequency=self.min_frequency)
+        return _CoreRare(
+            min_frequency=self.min_frequency,
+            other_label=self.other_label,
+            missing_strategy=self.missing_strategy,
+            missing_label=self.missing_label,
+            unknown_category_strategy=self.unknown_category_strategy,
+        )
 
 
 class AutoBucket(TransformerMixin, BaseEstimator):
@@ -151,15 +289,33 @@ class AutoBucket(TransformerMixin, BaseEstimator):
         n_bins: int = 5,
         min_frequency: int | float = 0.01,
         duplicates: str = "drop",
+        missing_strategy: MissingStrategy = "separate",
+        missing_label: Any = "Missing",
+        boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
+        unknown_category_strategy: UnknownCategoryStrategy = "other",
+        other_label: Any = "Other",
     ) -> None:
         if numeric_strategy not in {"quantile", "width"}:
             raise InvalidBucketingError(
                 "numeric_strategy must be 'quantile' or 'width'."
             )
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
+        _validate_sklearn_unknown_strategy(unknown_category_strategy)
+        validate_min_frequency(min_frequency)
         self.numeric_strategy = numeric_strategy
         self.n_bins = n_bins
         self.min_frequency = min_frequency
         self.duplicates = duplicates
+        self.missing_strategy = missing_strategy
+        self.missing_label = missing_label
+        self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
+        self.unknown_category_strategy = unknown_category_strategy
+        self.other_label = other_label
 
     def _is_numeric(self, column: list[Any]) -> bool:
         from pickbuckets.runtime.apply import is_missing
@@ -177,15 +333,34 @@ class AutoBucket(TransformerMixin, BaseEstimator):
         for name, column in zip(names, columns):
             if self._is_numeric(column):
                 if self.numeric_strategy == "width":
-                    core: Any = _CoreEqWidth(n_bins=self.n_bins, labels="ordinal")
+                    core: Any = _CoreEqWidth(
+                        n_bins=self.n_bins,
+                        labels="ordinal",
+                        missing_strategy=self.missing_strategy,
+                        missing_label=self.missing_label,
+                        boundary_strategy=self.boundary_strategy,
+                        underflow_label=self.underflow_label,
+                        overflow_label=self.overflow_label,
+                    )
                 else:
                     core = _CoreEqFreq(
                         n_bins=self.n_bins,
                         labels="ordinal",
                         duplicates=self.duplicates,
+                        missing_strategy=self.missing_strategy,
+                        missing_label=self.missing_label,
+                        boundary_strategy=self.boundary_strategy,
+                        underflow_label=self.underflow_label,
+                        overflow_label=self.overflow_label,
                     )
             else:
-                core = _CoreRare(min_frequency=self.min_frequency)
+                core = _CoreRare(
+                    min_frequency=self.min_frequency,
+                    other_label=self.other_label,
+                    missing_strategy=self.missing_strategy,
+                    missing_label=self.missing_label,
+                    unknown_category_strategy=self.unknown_category_strategy,
+                )
             core.fit(column)
             rule = core.rules_
             payload = rule.to_dict()
@@ -199,11 +374,12 @@ class AutoBucket(TransformerMixin, BaseEstimator):
     def transform(self, X: Any) -> Any:
         if not hasattr(self, "rules_"):
             raise NotFittedError("This estimator is not fitted yet.")
-        columns, _ = _as_columns(X)
+        columns, names = _as_columns(X)
         if len(columns) != self.n_features_in_:
             raise ValueError(
                 f"X has {len(columns)} features, expected {self.n_features_in_}."
             )
+        _validate_feature_names(self.feature_names_in_, names)
         encoded = [_encode(rule, column) for rule, column in zip(self.rules_, columns)]
         return np.asarray(encoded, dtype=float).T
 
@@ -211,7 +387,9 @@ class AutoBucket(TransformerMixin, BaseEstimator):
         if not hasattr(self, "rules_"):
             raise NotFittedError("This estimator is not fitted yet.")
         if input_features is not None:
-            return np.asarray([str(name) for name in input_features], dtype=object)
+            names = [str(name) for name in input_features]
+            _validate_feature_names(self.feature_names_in_, names)
+            return np.asarray(names, dtype=object)
         return np.asarray(
             [str(rule.feature_name) for rule in self.rules_], dtype=object
         )

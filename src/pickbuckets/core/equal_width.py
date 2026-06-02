@@ -3,7 +3,16 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from pickbuckets.core._utils import make_labels, numeric_values, validate_n_bins
+from pickbuckets.core._utils import (
+    make_labels,
+    missing_count,
+    most_frequent_label,
+    numeric_bin_counts,
+    numeric_values,
+    validate_boundary_strategy,
+    validate_missing_strategy,
+    validate_n_bins,
+)
 from pickbuckets.core.base import BaseBucket
 from pickbuckets.rules import Rule
 from pickbuckets.rules.schema import BoundaryStrategy, MissingStrategy
@@ -19,17 +28,24 @@ class EqualWidthBucket(BaseBucket):
         missing_strategy: MissingStrategy = "separate",
         missing_label: Any = "Missing",
         boundary_strategy: BoundaryStrategy = "clip",
+        underflow_label: Any = "Underflow",
+        overflow_label: Any = "Overflow",
     ) -> None:
         validate_n_bins(n_bins)
+        validate_missing_strategy(missing_strategy)
+        validate_boundary_strategy(boundary_strategy)
         self.n_bins = n_bins
         self.labels = labels
         self.feature_name = feature_name
         self.missing_strategy = missing_strategy
         self.missing_label = missing_label
         self.boundary_strategy = boundary_strategy
+        self.underflow_label = underflow_label
+        self.overflow_label = overflow_label
 
     def fit(self, values: Iterable[Any]) -> EqualWidthBucket:
-        clean = numeric_values(values)
+        raw = list(values)
+        clean = numeric_values(raw)
         minimum = min(clean)
         maximum = max(clean)
         if minimum == maximum:
@@ -38,20 +54,36 @@ class EqualWidthBucket(BaseBucket):
             width = (maximum - minimum) / self.n_bins
             edges = [minimum + width * index for index in range(self.n_bins + 1)]
             edges[-1] = maximum
+        labels = make_labels(edges, self.labels)
+        bin_counts = numeric_bin_counts(
+            clean,
+            edges,
+            labels,
+            boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
+        )
+        missing_label = self.missing_label
+        if self.missing_strategy == "most_frequent":
+            missing_label = most_frequent_label(bin_counts)
 
         self.rules_ = Rule(
             kind="numeric",
             feature_name=self.feature_name,
             edges=edges,
-            labels=make_labels(edges, self.labels),
+            labels=labels,
             missing_strategy=self.missing_strategy,
-            missing_label=self.missing_label,
+            missing_label=missing_label,
             boundary_strategy=self.boundary_strategy,
+            underflow_label=self.underflow_label,
+            overflow_label=self.overflow_label,
             fit_stats={
                 "algorithm": "equal_width",
                 "n_observations": len(clean),
+                "n_missing": missing_count(raw),
                 "minimum": minimum,
                 "maximum": maximum,
+                "bin_counts": bin_counts,
             },
         )
         return self

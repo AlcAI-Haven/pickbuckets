@@ -32,6 +32,8 @@ categorical dtypes are bucketed with rare-category folding.
 
 Unsupported columns raise `InvalidBucketingError` by default. Pass
 `ignore_unsupported=True` to leave unsupported columns unchanged on transform.
+Transform input must contain the same fitted columns; missing or unexpected
+columns raise `InvalidBucketingError`.
 
 ## Polars
 
@@ -46,6 +48,11 @@ Rules using `missing_strategy="error"`, `boundary_strategy="error"`, or
 `unknown_category_strategy="error"` require eager evaluation. This keeps the
 typed exception behavior aligned with the pure-Python runtime.
 
+`unknown_category_strategy="keep"` is supported when outputs remain string
+typed. Mixed-type outputs with `keep` are rejected because Polars cannot
+preserve arbitrary kept unknown strings and non-string labels in a native
+expression.
+
 ## scikit-learn
 
 The sklearn adapters live in `pickbuckets.sklearn`:
@@ -58,6 +65,10 @@ They implement sklearn-style `fit`, `transform`, `fit_transform`,
 `get_feature_names_out`, `get_params`, and `set_params`. Transforms return
 integer code arrays, which are suitable for downstream estimators in
 `sklearn.pipeline.Pipeline`.
+
+Feature names must match the fit-time order on transform. The sklearn adapters
+reject `unknown_category_strategy="keep"` because they return stable integer
+code arrays rather than arbitrary new string labels.
 
 Each fitted sklearn adapter exposes its portable `Rule` objects on `rules_`, so
 rules can still be serialized and applied outside sklearn.
@@ -81,7 +92,8 @@ It records:
 
 Use `overrides={"column": bucketer}` to force a specific bucketer for a column.
 Overrides are fitted like automatically selected bucketers and receive the
-column name in the exported rule.
+column name in the exported rule. Unknown override columns and non-bucketer
+override values raise `InvalidBucketingError`.
 
 ## CI Coverage
 
