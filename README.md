@@ -4,7 +4,7 @@
 [![Rule schema 1.x](https://img.shields.io/badge/rule%20schema-1.x-blueviolet)](#rule-portability)
 [![pandas >=1.5](https://img.shields.io/badge/pandas-%3E%3D1.5-150458)](#pandas) [![Polars >=1.40](https://img.shields.io/badge/polars-%3E%3D1.40%20%28py3.10%2B%29-CD792C)](#polars) [![scikit-learn >=1.2](https://img.shields.io/badge/scikit--learn-%3E%3D1.2-F7931E)](#scikit-learn)
 
-Portable bucketing rules for Python.
+Portable bucketing rules for ML feature engineering and scoring.
 
 `pickbuckets` turns raw numerical and categorical values into human-readable,
 versioned rules that can be serialized, reviewed, diffed, and applied in a
@@ -41,18 +41,16 @@ The v0.3 robustness release is implemented:
 
 ## When To Use This
 
-Use `pickbuckets` when bucket boundaries are part of the model contract, not
-just an implementation detail:
+Quick recap: use `pickbuckets` when ML buckets need to be stable, reviewable,
+and identical across training, batch scoring, online inference, and monitoring.
 
-- credit scoring models that need reviewed score, utilization, income, or
-  delinquency bands to stay identical across training and production scoring
-- fraud detection models that reuse amount, transaction velocity, device risk,
-  or merchant-category buckets in online and batch decisions
-- regulatory and compliance risk models where jurisdiction, exposure, capital,
-  or review-tier rules need to be diffed, approved, and replayed
+It fits tabular preprocessing, feature-store transforms, score banding,
+model-monitoring slices, and governed models such as credit scoring, fraud
+detection, churn prediction, recommender ranking, pricing, healthcare or
+insurance risk, and regulatory workflows.
 
 See [docs/rule-gallery.md](docs/rule-gallery.md) for realistic JSON rule
-examples in those domains.
+examples across ML use cases.
 
 ## Install
 
