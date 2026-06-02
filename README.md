@@ -1,5 +1,9 @@
 # pickbuckets
 
+[![Python 3.9-3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/pickbuckets/)
+[![Rule schema 1.x](https://img.shields.io/badge/rule%20schema-1.x-blueviolet)](#rule-portability)
+[![pandas >=1.5](https://img.shields.io/badge/pandas-%3E%3D1.5-150458)](#pandas) [![Polars >=1.40](https://img.shields.io/badge/polars-%3E%3D1.40%20%28py3.10%2B%29-CD792C)](#polars) [![scikit-learn >=1.2](https://img.shields.io/badge/scikit--learn-%3E%3D1.2-F7931E)](#scikit-learn)
+
 Portable bucketing rules for Python.
 
 `pickbuckets` turns raw numerical and categorical values into human-readable,
@@ -34,6 +38,25 @@ The v0.3 robustness release is implemented:
 - most-frequent missing replacement, explicit underflow/overflow buckets, and
   unknown-category `other`, `missing`, `keep`, and `error` strategies
 - tests, lint, typing, build checks, and a no-heavy-dependencies CI gate
+
+## When To Use This
+
+Use `pickbuckets` when bucket boundaries are part of the model contract, not
+just an implementation detail:
+
+- credit scoring and lending models that need stable score bands and auditable
+  applicant attributes
+- fraud detection pipelines that share transaction amount, velocity, or merchant
+  category buckets across training, batch scoring, and online services
+- regulatory, compliance, and risk models where rule changes need to be
+  reviewed, diffed, approved, and replayed
+- customer segmentation, eligibility, and pricing workflows that need the same
+  buckets in notebooks, jobs, APIs, and BI exports
+- lightweight inference services that should apply preprocessing rules without
+  importing pandas, Polars, or scikit-learn
+
+See [docs/rule-gallery.md](docs/rule-gallery.md) for realistic JSON rule
+examples.
 
 ## Install
 
