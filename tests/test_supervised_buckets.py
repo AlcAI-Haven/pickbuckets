@@ -82,6 +82,56 @@ def test_woe_bucket_rejects_invalid_smoothing(smoothing):
         WoEBucket(n_bins=2, smoothing=smoothing)
 
 
+@pytest.mark.parametrize("min_bin_size", [0, -0.1, True, 1.5, float("inf")])
+def test_woe_bucket_rejects_invalid_min_bin_size(min_bin_size):
+    with pytest.raises(InvalidBucketingError, match="min_bin_size"):
+        WoEBucket(n_bins=2, min_bin_size=min_bin_size)
+
+
+@pytest.mark.parametrize("monotonic", ["up", True])
+def test_woe_bucket_rejects_invalid_monotonic_policy(monotonic):
+    with pytest.raises(InvalidBucketingError, match="monotonic"):
+        WoEBucket(n_bins=2, monotonic=monotonic)
+
+
+def test_woe_bucket_min_bin_size_merges_adjacent_bins():
+    bucket = WoEBucket(n_bins=4, min_bin_size=3, smoothing=0.5).fit(
+        list(range(8)),
+        [0, 0, 0, 1, 1, 1, 1, 1],
+    )
+
+    rows = bucket.summary_table()
+    assert all(row["count"] >= 3 for row in rows)
+    assert bucket.rules_.fit_stats["actual_bins"] == len(rows)
+    assert bucket.rules_.fit_stats["actual_bins"] < 4
+    assert bucket.rules_.fit_stats["min_bin_count"] == 3
+    assert bucket.rules_.fit_stats["min_bin_size_merge_count"] > 0
+
+
+def test_woe_bucket_monotonic_constraint_merges_violations():
+    bucket = WoEBucket(n_bins=4, monotonic="ascending", smoothing=0.5).fit(
+        list(range(8)),
+        [0, 0, 1, 1, 0, 0, 1, 1],
+    )
+
+    woes = [row["woe"] for row in bucket.summary_table()]
+    assert woes == sorted(woes)
+    assert bucket.rules_.fit_stats["monotonic_direction"] == "ascending"
+    assert bucket.rules_.fit_stats["monotonic_merge_count"] > 0
+    assert bucket.rules_.fit_stats["actual_bins"] < 4
+
+
+def test_woe_bucket_auto_monotonic_records_resolved_direction():
+    bucket = WoEBucket(n_bins=4, monotonic="auto", smoothing=0.5).fit(
+        list(range(8)),
+        [1, 1, 0, 0, 1, 1, 0, 0],
+    )
+
+    woes = [row["woe"] for row in bucket.summary_table()]
+    assert woes == sorted(woes, reverse=True)
+    assert bucket.rules_.fit_stats["monotonic_direction"] == "descending"
+
+
 def test_woe_bucket_can_transform_to_woe_values_and_round_trip():
     bucket = WoEBucket(n_bins=2, output="woe", smoothing=0.5).fit(
         [0, 1, 2, 3],

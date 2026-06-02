@@ -226,7 +226,13 @@ counts, target rates, WoE, and IV.
 ```python
 from pickbuckets import WoEBucket
 
-bucket = WoEBucket(n_bins=3, output="woe", smoothing=0.5)
+bucket = WoEBucket(
+    n_bins=3,
+    output="woe",
+    min_bin_size=0.1,
+    monotonic="auto",
+    smoothing=0.5,
+)
 bucket.fit([10, 20, 30, 40, 50, 60], [0, 0, 0, 1, 1, 1])
 
 print(bucket.transform([15, 45]))
@@ -236,8 +242,11 @@ print(bucket.summary_table())
 
 `DecisionTreeBucket` learns numeric edges from a shallow scikit-learn decision
 tree, so it requires `pickbuckets[sklearn]`. `ChiMergeBucket` and `WoEBucket`
-are dependency-free. `ExternalSplitBucket` imports externally learned split
-points, for example from OptBinning, into a normal portable numeric rule.
+are dependency-free. `WoEBucket` supports count- or ratio-based
+`min_bin_size` constraints and optional monotonic WoE constraints with
+`monotonic="ascending"`, `"descending"`, or `"auto"`. `ExternalSplitBucket`
+imports externally learned split points, for example from OptBinning, into a
+normal portable numeric rule.
 
 ## pandas
 

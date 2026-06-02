@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from math import isfinite, log
+from math import ceil, isfinite, log
 from typing import Any
 
 from pickbuckets.core._utils import (
@@ -200,6 +200,8 @@ class WoEBucket(SupervisedBucket):
         *,
         strategy: str = "quantile",
         output: str = "label",
+        min_bin_size: int | float = 1,
+        monotonic: str | None = None,
         event_label: Any = 1,
         smoothing: float = 0.5,
         labels: str | Sequence[Any] = "ordinal",
@@ -215,12 +217,16 @@ class WoEBucket(SupervisedBucket):
             raise InvalidBucketingError("strategy must be 'quantile' or 'width'.")
         if output not in {"label", "woe"}:
             raise InvalidBucketingError("output must be 'label' or 'woe'.")
+        _validate_min_bin_size(min_bin_size)
+        _validate_monotonic(monotonic)
         _validate_smoothing(smoothing)
         validate_missing_strategy(missing_strategy)
         validate_boundary_strategy(boundary_strategy)
         self.n_bins = n_bins
         self.strategy = strategy
         self.output = output
+        self.min_bin_size = min_bin_size
+        self.monotonic = monotonic
         self.event_label = event_label
         self.smoothing = float(smoothing)
         self.labels = labels
@@ -234,7 +240,16 @@ class WoEBucket(SupervisedBucket):
     def fit(self, values: Iterable[Any], y: Iterable[Any] | None = None) -> WoEBucket:
         raw_values, clean, targets = _validated_pairs(values, y)
         events = _binary_events(targets, self.event_label)
-        edges = _initial_edges(clean, self.n_bins, self.strategy)
+        min_bin_count = _min_bin_count(self.min_bin_size, len(clean))
+        bins = _make_initial_bins(clean, events, self.n_bins, self.strategy)
+        size_merge_count = _merge_min_size_bins(bins, min_bin_count)
+        monotonic_direction = _resolve_monotonic_direction(
+            bins, self.monotonic, self.smoothing
+        )
+        monotonic_merge_count = _merge_monotonic_bins(
+            bins, monotonic_direction, self.smoothing
+        )
+        edges = [bins[0].left, *[item.right for item in bins]]
         display_labels = make_labels(edges, self.labels)
         summary, iv = _supervised_summary(
             clean, events, edges, display_labels, self.smoothing
@@ -277,6 +292,13 @@ class WoEBucket(SupervisedBucket):
                 "actual_bins": len(edges) - 1,
                 "strategy": self.strategy,
                 "output": self.output,
+                "min_bin_size": self.min_bin_size,
+                "min_bin_count": min_bin_count,
+                "monotonic": self.monotonic,
+                "monotonic_direction": monotonic_direction,
+                "merge_count": size_merge_count + monotonic_merge_count,
+                "min_bin_size_merge_count": size_merge_count,
+                "monotonic_merge_count": monotonic_merge_count,
                 "event_label": self.event_label,
                 "smoothing": self.smoothing,
                 "iv": iv,
@@ -622,9 +644,12 @@ def _supervised_summary(
 
 
 def _make_initial_bins(
-    values: Sequence[float], events: Sequence[int], initial_bins: int
+    values: Sequence[float],
+    events: Sequence[int],
+    initial_bins: int,
+    strategy: str = "quantile",
 ) -> list[_Bin]:
-    edges = _initial_edges(values, initial_bins, "quantile")
+    edges = _initial_edges(values, initial_bins, strategy)
     bins = [_Bin(left, right, [], []) for left, right in zip(edges, edges[1:])]
     for value, event in zip(values, events):
         index = _numeric_bin_index(value, edges)
@@ -632,6 +657,101 @@ def _make_initial_bins(
         bins[index].events.append(event)
     return [item for item in bins if item.values] or [
         _Bin(min(values), max(values), list(values), list(events))
+    ]
+
+
+def _merge_min_size_bins(bins: list[_Bin], min_bin_count: int) -> int:
+    merge_count = 0
+    while len(bins) > 1 and any(len(item.values) < min_bin_count for item in bins):
+        stats = [_chi_square(left, right) for left, right in zip(bins, bins[1:])]
+        pair_index = _best_merge_index(bins, stats, min_bin_count)
+        bins[pair_index] = _merge_two_bins(bins[pair_index], bins[pair_index + 1])
+        del bins[pair_index + 1]
+        merge_count += 1
+    if any(len(item.values) < min_bin_count for item in bins):
+        raise InvalidBucketingError(
+            "min_bin_size is larger than the number of fitted observations."
+        )
+    return merge_count
+
+
+def _resolve_monotonic_direction(
+    bins: Sequence[_Bin], monotonic: str | None, smoothing: float
+) -> str | None:
+    if monotonic is None or len(bins) < 2:
+        return None
+    if monotonic in {"ascending", "descending"}:
+        return monotonic
+
+    values = _bin_woes(bins, smoothing)
+    ascending_violations = _monotonic_violations(values, "ascending")
+    descending_violations = _monotonic_violations(values, "descending")
+    if len(ascending_violations) < len(descending_violations):
+        return "ascending"
+    if len(descending_violations) < len(ascending_violations):
+        return "descending"
+    return "ascending" if values[-1] >= values[0] else "descending"
+
+
+def _merge_monotonic_bins(
+    bins: list[_Bin], direction: str | None, smoothing: float
+) -> int:
+    if direction is None:
+        return 0
+
+    merge_count = 0
+    while len(bins) > 1:
+        woes = _bin_woes(bins, smoothing)
+        violations = _monotonic_violations(woes, direction)
+        if not violations:
+            break
+        pair_index = min(
+            violations,
+            key=lambda index: (abs(woes[index] - woes[index + 1]), index),
+        )
+        bins[pair_index] = _merge_two_bins(bins[pair_index], bins[pair_index + 1])
+        del bins[pair_index + 1]
+        merge_count += 1
+    return merge_count
+
+
+def _bin_woes(bins: Sequence[_Bin], smoothing: float) -> list[float]:
+    total_events = sum(sum(item.events) for item in bins)
+    total_non_events = sum(len(item.events) - sum(item.events) for item in bins)
+    n_bins = len(bins)
+    return [
+        _bin_woe(item, total_events, total_non_events, n_bins, smoothing)
+        for item in bins
+    ]
+
+
+def _bin_woe(
+    item: _Bin,
+    total_events: int,
+    total_non_events: int,
+    n_bins: int,
+    smoothing: float,
+) -> float:
+    event_count = sum(item.events)
+    non_event_count = len(item.events) - event_count
+    event_dist = (event_count + smoothing) / (total_events + smoothing * n_bins)
+    non_event_dist = (non_event_count + smoothing) / (
+        total_non_events + smoothing * n_bins
+    )
+    return log(event_dist / non_event_dist)
+
+
+def _monotonic_violations(values: Sequence[float], direction: str) -> list[int]:
+    if direction == "ascending":
+        return [
+            index
+            for index, (left, right) in enumerate(zip(values, values[1:]))
+            if left > right
+        ]
+    return [
+        index
+        for index, (left, right) in enumerate(zip(values, values[1:]))
+        if left < right
     ]
 
 
@@ -768,6 +888,44 @@ def _validate_smoothing(value: float) -> None:
         or value <= 0
     ):
         raise InvalidBucketingError("smoothing must be a positive finite number.")
+
+
+def _validate_min_bin_size(value: int | float) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(float(value))
+        or value <= 0
+    ):
+        raise InvalidBucketingError(
+            "min_bin_size must be a positive count or ratio."
+        )
+    if isinstance(value, float) and value > 1:
+        raise InvalidBucketingError(
+            "Float min_bin_size must be in the range (0, 1]."
+        )
+
+
+def _min_bin_count(min_bin_size: int | float, n_observations: int) -> int:
+    count = (
+        int(ceil(min_bin_size * n_observations))
+        if isinstance(min_bin_size, float)
+        else min_bin_size
+    )
+    if count > n_observations:
+        raise InvalidBucketingError(
+            "min_bin_size is larger than the number of fitted observations."
+        )
+    return max(1, count)
+
+
+def _validate_monotonic(value: str | None) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or value not in {"ascending", "descending", "auto"}:
+        raise InvalidBucketingError(
+            "monotonic must be None, 'ascending', 'descending', or 'auto'."
+        )
 
 
 def _validate_min_chi2(value: float | None) -> None:
