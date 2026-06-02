@@ -45,7 +45,7 @@ For optional integrations:
 
 ```bash
 python -m pip install "pickbuckets[pandas]"
-python -m pip install "pickbuckets[polars]"
+python -m pip install "pickbuckets[polars]"  # Python 3.10+
 python -m pip install "pickbuckets[sklearn]"
 python -m pip install "pickbuckets[all]"
 ```
@@ -216,9 +216,9 @@ handled by the same saved rule model as the dependency-free runtime.
 
 ## Polars
 
-Install with `pickbuckets[polars]`. Polars support uses native expressions for
-transform, not row-wise Python loops. Eager frames and lazy queries are both
-supported for non-raising rules.
+Install with `pickbuckets[polars]` on Python 3.10 or newer. Polars support uses
+native expressions for transform, not row-wise Python loops. Eager frames and
+lazy queries are both supported for non-raising rules.
 
 ```python
 import polars as pl

@@ -9,7 +9,7 @@ those libraries or imports the sklearn adapter module explicitly.
 
 ```bash
 python -m pip install "pickbuckets[pandas]"
-python -m pip install "pickbuckets[polars]"
+python -m pip install "pickbuckets[polars]"  # Python 3.10+
 python -m pip install "pickbuckets[sklearn]"
 python -m pip install "pickbuckets[all]"
 ```
@@ -35,8 +35,8 @@ Unsupported columns raise `InvalidBucketingError` by default. Pass
 
 ## Polars
 
-Single-column bucketers accept `polars.Series` and return a `Series` with the
-same name.
+Polars integration requires Python 3.10 or newer. Single-column bucketers accept
+`polars.Series` and return a `Series` with the same name.
 
 `AutoBucket` accepts `polars.DataFrame` and `polars.LazyFrame`. Transform uses
 native Polars expressions, so it composes inside an eager frame update or lazy
@@ -86,8 +86,9 @@ column name in the exported rule.
 ## CI Coverage
 
 The GitHub Actions workflow runs on Python 3.9 through 3.13 and installs
-`.[dev,all]`, so pandas, Polars, and sklearn tests run in the normal matrix.
-It also runs ruff, mypy, pytest, and package build checks.
+`.[dev,all]`. Python 3.9 exercises the dependency-free core plus integrations
+whose upstream packages still support 3.9; Polars tests run on Python 3.10+.
+The workflow also runs ruff, mypy, pytest, and package build checks.
 
 A separate no-heavy-dependencies job installs only the base package and pytest,
 then verifies that importing `pickbuckets` does not import pandas, Polars, or
