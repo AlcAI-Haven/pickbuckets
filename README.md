@@ -4,7 +4,8 @@ Portable bucketing rules for Python.
 
 `pickbuckets` turns raw numerical and categorical values into human-readable,
 versioned rules that can be serialized, reviewed, diffed, and applied in a
-plain-Python runtime. The core package has no runtime dependencies.
+plain-Python runtime. The core package has no runtime dependencies; pandas,
+Polars, and scikit-learn support live behind optional extras.
 
 ```python
 from pickbuckets import EqualWidthBucket
@@ -18,39 +19,48 @@ print(bucket.to_json())
 
 ## Status
 
-The v0.1 core is implemented:
+The v0.2 developer-experience release is implemented:
 
 - one unified `Rule` model for numeric and categorical buckets
 - readable dict/JSON serialization with schema and package versions
 - dependency-free rule application for services and jobs
 - equal-width, equal-frequency, custom-boundary, and rare-category bucketers
+- `AutoBucket` for column-wise smart type dispatch
+- pandas `Series`/`DataFrame` support with index and column preservation
+- first-class Polars `Series`, `DataFrame`, and `LazyFrame` support
+- scikit-learn-compatible transformers in `pickbuckets.sklearn`
 - typed exceptions and configurable missing, boundary, and unknown-category
   policies
-- tests, lint, typing, and a no-heavy-dependencies CI gate
+- tests, lint, typing, build checks, and a no-heavy-dependencies CI gate
 
 ## Install
 
-For development:
+For the dependency-free core:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install pickbuckets
 ```
 
-For optional integrations planned after the core:
+For optional integrations:
 
 ```bash
 python -m pip install "pickbuckets[pandas]"
 python -m pip install "pickbuckets[polars]"
 python -m pip install "pickbuckets[sklearn]"
+python -m pip install "pickbuckets[all]"
 ```
 
-Those extras are declared as placeholders, but integration modules are not part
-of the current v0.1 core yet.
+For development:
+
+```bash
+python -m pip install -e ".[dev,all]"
+```
 
 ## Current API
 
 ```python
 from pickbuckets import (
+    AutoBucket,
     CustomBoundaryBucket,
     EqualFrequencyBucket,
     EqualWidthBucket,
@@ -59,11 +69,12 @@ from pickbuckets import (
 )
 ```
 
-Every bucketer follows the same shape:
+Every single-column bucketer follows the same shape:
 
 ```python
 bucket.fit(values)
 bucket.transform(new_values)
+bucket.summary()
 bucket.to_dict()
 bucket.to_json()
 ```
@@ -152,6 +163,110 @@ assert bucket.transform(["FR", "US", "CA", None]) == [
 Category keys are stored as strings in the exported rule so JSON payloads remain
 portable.
 
+## AutoBucket
+
+`AutoBucket` fits one rule per column and chooses the strategy from each column
+dtype. Numeric columns use equal-frequency binning by default; categorical and
+string columns use rare-category folding. Explicit per-column overrides win over
+automatic inference.
+
+```python
+from pickbuckets import AutoBucket, EqualWidthBucket
+
+frame = {
+    "age": [18, 25, 34, 52, 70],
+    "country": ["FR", "FR", "US", "DE", "DE"],
+}
+
+auto = AutoBucket(
+    n_bins=3,
+    min_frequency=2,
+    overrides={"age": EqualWidthBucket(n_bins=3, labels="interval")},
+).fit(frame)
+
+print(auto.transform(frame))
+print(auto.summary())
+```
+
+Plain `dict[str, list]`, pandas `DataFrame`, Polars `DataFrame`, and Polars
+`LazyFrame` inputs return the same container type on transform.
+
+## pandas
+
+Install with `pickbuckets[pandas]`. Single-column bucketers preserve pandas
+`Series` index and name, and `AutoBucket` preserves `DataFrame` columns and
+index.
+
+```python
+import pandas as pd
+from pickbuckets import AutoBucket
+
+df = pd.DataFrame(
+    {"age": [10, 20, 30, 40], "city": ["A", "A", "B", "C"]},
+    index=["r0", "r1", "r2", "r3"],
+)
+
+out = AutoBucket(n_bins=2, min_frequency=2).fit_transform(df)
+assert list(out.index) == list(df.index)
+assert list(out.columns) == ["age", "city"]
+```
+
+Nullable numeric dtypes, object/string columns, and categorical dtypes are
+handled by the same saved rule model as the dependency-free runtime.
+
+## Polars
+
+Install with `pickbuckets[polars]`. Polars support uses native expressions for
+transform, not row-wise Python loops. Eager frames and lazy queries are both
+supported for non-raising rules.
+
+```python
+import polars as pl
+from pickbuckets import AutoBucket
+
+df = pl.DataFrame(
+    {"age": [10, 20, 30, 40], "city": ["A", "A", "B", "C"]}
+)
+
+auto = AutoBucket(n_bins=2, min_frequency=2, labels="interval").fit(df)
+eager = auto.transform(df)
+lazy = auto.transform(df.lazy()).collect()
+
+assert eager.to_dict(as_series=False) == lazy.to_dict(as_series=False)
+```
+
+Rules configured with an `error` strategy for missing values, numeric
+boundaries, or unknown categories require eager evaluation so the library can
+raise the same typed exceptions as the pure-Python runtime.
+
+## scikit-learn
+
+Install with `pickbuckets[sklearn]`. The sklearn adapters live in
+`pickbuckets.sklearn` so importing `pickbuckets` stays dependency-free.
+
+```python
+import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+
+import pickbuckets.sklearn as pbsk
+
+X = np.array([[float(v)] for v in range(8)])
+y = [0, 0, 0, 0, 1, 1, 1, 1]
+
+pipe = Pipeline(
+    [("bucket", pbsk.EqualWidthBucket(n_bins=4)), ("model", LogisticRegression())]
+)
+pipe.fit(X, y)
+```
+
+The adapters expose `get_params`, `set_params`, `fit_transform`,
+`get_feature_names_out`, and fitted portable `Rule` objects on `rules_`.
+Transforms return integer code arrays suitable for downstream estimators.
+
+See [docs/integrations.md](docs/integrations.md) for the phase 2 integration
+details and CI coverage notes.
+
 ## Policies And Errors
 
 Policies are stored on the unified rule and survive serialization.
@@ -221,6 +336,7 @@ Run the full local check set before opening a PR:
 ruff check .
 mypy src/pickbuckets
 pytest
+python -m build
 ```
 
 Useful project principles:

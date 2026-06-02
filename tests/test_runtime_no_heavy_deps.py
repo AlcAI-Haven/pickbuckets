@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 import pytest
@@ -7,9 +8,16 @@ from pickbuckets.runtime import apply_rule
 
 
 def test_base_import_does_not_import_heavy_dependencies():
-    assert "pandas" not in sys.modules
-    assert "polars" not in sys.modules
-    assert "sklearn" not in sys.modules
+    # Run in a clean subprocess so the result does not depend on whether another
+    # test in the session already imported pandas/Polars/sklearn.
+    code = (
+        "import sys, pickbuckets; "
+        "assert 'pandas' not in sys.modules; "
+        "assert 'polars' not in sys.modules; "
+        "assert 'sklearn' not in sys.modules"
+    )
+    completed = subprocess.run([sys.executable, "-c", code], capture_output=True)
+    assert completed.returncode == 0, completed.stderr.decode()
 
 
 def test_saved_rule_applies_with_plain_python_runtime():

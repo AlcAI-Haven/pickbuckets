@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable
 from math import isnan
 from typing import Any
@@ -25,9 +26,19 @@ def is_missing(value: Any) -> bool:
     if value is None:
         return True
     try:
-        return bool(isnan(value))
+        if isnan(value):
+            return True
     except (TypeError, ValueError):
-        return False
+        pass
+    # Recognise pandas NA/NaT (and similar) without importing pandas: only
+    # consult the module if the caller already imported it.
+    pandas = sys.modules.get("pandas")
+    if pandas is not None:
+        try:
+            return bool(pandas.isna(value))
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def _handle_missing(rule: Rule, value: Any) -> Any:
