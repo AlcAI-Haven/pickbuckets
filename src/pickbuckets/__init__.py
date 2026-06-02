@@ -1,5 +1,6 @@
 from pickbuckets._version import __version__
 from pickbuckets.core import (
+    AutoBucket,
     CustomBoundaryBucket,
     EqualFrequencyBucket,
     EqualWidthBucket,
@@ -17,6 +18,7 @@ from pickbuckets.exceptions import (
 from pickbuckets.rules import Rule
 
 __all__ = [
+    "AutoBucket",
     "BoundaryError",
     "CustomBoundaryBucket",
     "EqualFrequencyBucket",

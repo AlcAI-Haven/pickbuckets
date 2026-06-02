@@ -5,7 +5,7 @@ Thanks for helping make `pickbuckets` useful.
 ## Development setup
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,all]"
 pytest
 ```
 
@@ -23,5 +23,5 @@ pytest
 ruff check .
 mypy src/pickbuckets
 pytest
+python -m build
 ```
-
