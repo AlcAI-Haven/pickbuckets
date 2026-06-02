@@ -23,7 +23,7 @@ print(bucket.to_json())
 
 ## Status
 
-The v0.3 robustness release is implemented:
+The v0.4 supervised-binning release is implemented:
 
 - one unified `Rule` model for numeric and categorical buckets
 - readable dict/JSON serialization with schema and package versions
@@ -37,6 +37,7 @@ The v0.3 robustness release is implemented:
   policies
 - most-frequent missing replacement, explicit underflow/overflow buckets, and
   unknown-category `other`, `missing`, `keep`, and `error` strategies
+- supervised decision-tree, WoE/IV, ChiMerge, and external split import buckets
 - tests, lint, typing, build checks, and a no-heavy-dependencies CI gate
 
 ## When To Use This
@@ -80,11 +81,15 @@ python -m pip install -e ".[dev,all]"
 ```python
 from pickbuckets import (
     AutoBucket,
+    ChiMergeBucket,
     CustomBoundaryBucket,
+    DecisionTreeBucket,
     EqualFrequencyBucket,
     EqualWidthBucket,
+    ExternalSplitBucket,
     RareCategoryBucket,
     Rule,
+    WoEBucket,
 )
 ```
 
@@ -211,6 +216,28 @@ Plain `dict[str, list]`, pandas `DataFrame`, Polars `DataFrame`, and Polars
 `LazyFrame` inputs return the same container type on transform. Transform input
 must contain the same column names fitted by the bucketer; missing or unexpected
 columns raise `InvalidBucketingError`.
+
+## Supervised Buckets
+
+Supervised bucketers require `fit(values, y)` and never require `y` during
+`transform()`. Target data is stored only as aggregate fit statistics such as
+counts, target rates, WoE, and IV.
+
+```python
+from pickbuckets import WoEBucket
+
+bucket = WoEBucket(n_bins=3, output="woe", smoothing=0.5)
+bucket.fit([10, 20, 30, 40, 50, 60], [0, 0, 0, 1, 1, 1])
+
+print(bucket.transform([15, 45]))
+print(bucket.iv_summary())
+print(bucket.summary_table())
+```
+
+`DecisionTreeBucket` learns numeric edges from a shallow scikit-learn decision
+tree, so it requires `pickbuckets[sklearn]`. `ChiMergeBucket` and `WoEBucket`
+are dependency-free. `ExternalSplitBucket` imports externally learned split
+points, for example from OptBinning, into a normal portable numeric rule.
 
 ## pandas
 
