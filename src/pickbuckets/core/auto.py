@@ -207,9 +207,12 @@ class AutoBucket:
                 rule = self.rules_[name]
                 if kind is FrameKind.POLARS_LAZY:
                     lazy_guard(rule)
+                    exprs.append(rule_expr(rule, pl.col(name)).alias(name))
                 else:
                     precheck_series(rule, frame.get_column(name))
-                exprs.append(rule_expr(rule, pl.col(name)).alias(name))
+                    exprs.append(
+                        rule_expr(rule, pl.col(name), cast_numeric=True).alias(name)
+                    )
         if not exprs:
             return frame
         return frame.with_columns(exprs)

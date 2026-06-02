@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from pickbuckets.exceptions import BoundaryError, PickBucketsError
+from pickbuckets.exceptions import (
+    BoundaryError,
+    InvalidBucketingError,
+    PickBucketsError,
+)
 from pickbuckets.rules import Rule
 
 
@@ -68,25 +72,34 @@ def _context(rule: Rule) -> str:
     return f"Feature {rule.feature_name!r}: "
 
 
-def numeric_expr(rule: Rule, col: Any, *, use_object_dtype: bool) -> Any:
+def numeric_expr(
+    rule: Rule, col: Any, *, use_object_dtype: bool, cast_numeric: bool = False
+) -> Any:
     pl = _pl()
     edges = rule.edges or []
     labels = rule.labels
+
+    # On the eager path malformed values are rejected up front by
+    # :func:`precheck_series`, so any remaining string column holds only valid
+    # numeric text (or genuine nulls). Casting it to Float64 lets the same
+    # comparison chain run instead of leaking a Polars ``ComputeError`` and
+    # keeps behaviour aligned with the pure-Python runtime.
+    num = col.cast(pl.Float64, strict=False) if cast_numeric else col
 
     def lit(value: Any) -> Any:
         if use_object_dtype:
             return pl.lit(value, dtype=pl.Object)
         return pl.lit(value)
 
-    chain = pl.when(col < edges[1]).then(lit(labels[0]))
+    chain = pl.when(num < edges[1]).then(lit(labels[0]))
     for index in range(1, len(labels) - 1):
-        chain = chain.when(col < edges[index + 1]).then(lit(labels[index]))
+        chain = chain.when(num < edges[index + 1]).then(lit(labels[index]))
     mapped = chain.otherwise(lit(labels[-1]))
     if rule.boundary_strategy == "underflow_overflow":
         mapped = (
-            pl.when(col < edges[0])
+            pl.when(num < edges[0])
             .then(lit(rule.underflow_label))
-            .when(col > edges[-1])
+            .when(num > edges[-1])
             .then(lit(rule.overflow_label))
             .otherwise(mapped)
         )
@@ -171,12 +184,20 @@ def categorical_expr(rule: Rule, col: Any, *, stringify: bool) -> Any:
     return mapped
 
 
-def rule_expr(rule: Rule, col: Any) -> Any:
-    """Build a Polars expression that applies ``rule`` to a column expression."""
+def rule_expr(rule: Rule, col: Any, *, cast_numeric: bool = False) -> Any:
+    """Build a Polars expression that applies ``rule`` to a column expression.
+
+    ``cast_numeric`` should be set on the eager path, where
+    :func:`precheck_series` has already rejected malformed numeric input; it
+    lets numeric rules accept numeric-looking string columns instead of leaking
+    a Polars ``ComputeError``.
+    """
 
     stringify = not _homogeneous(rule)
     if rule.kind == "numeric":
-        return numeric_expr(rule, col, use_object_dtype=stringify)
+        return numeric_expr(
+            rule, col, use_object_dtype=stringify, cast_numeric=cast_numeric
+        )
     return categorical_expr(rule, col, stringify=stringify)
 
 
@@ -194,9 +215,25 @@ def precheck_series(rule: Rule, series: Any) -> None:
                 f"{_context(rule)}Missing value encountered and "
                 "missing_strategy='error'."
             )
+    numeric_series = series
+    if rule.kind == "numeric" and not series.dtype.is_numeric():
+        # A numeric rule applied to a non-numeric (e.g. Utf8) column: parse it
+        # the same way the pure-Python runtime does. Values that are non-null
+        # but fail to parse are malformed and must raise the typed,
+        # column-aware error rather than leaking a Polars ComputeError.
+        parsed = series.cast(pl.Float64, strict=False)
+        malformed = series.is_not_null() & parsed.is_null()
+        if bool(malformed.any()):
+            bad_value = series.filter(malformed).to_list()[0]
+            raise InvalidBucketingError(
+                f"{_context(rule)}Non-numeric value encountered during "
+                f"transform: {bad_value!r}"
+            )
+        numeric_series = parsed
+
     if rule.kind == "numeric" and rule.boundary_strategy == "error":
         edges = rule.edges or []
-        finite = series.drop_nulls()
+        finite = numeric_series.drop_nulls()
         if finite.dtype.is_float():
             finite = finite.filter(~finite.is_nan())
         if finite.len():
@@ -227,7 +264,9 @@ def apply_rule_polars(rule: Rule, series: Any) -> Any:
     precheck_series(rule, series)
     frame = series.to_frame()
     name = series.name
-    result = frame.select(rule_expr(rule, pl.col(name)).alias(name))
+    result = frame.select(
+        rule_expr(rule, pl.col(name), cast_numeric=True).alias(name)
+    )
     return result.to_series(0)
 
 

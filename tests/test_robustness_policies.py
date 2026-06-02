@@ -278,3 +278,31 @@ def test_polars_eager_errors_include_column_name():
 
     with pytest.raises(UnknownCategoryError, match="city"):
         auto.transform(pl.DataFrame({"city": ["B"]}))
+
+def test_polars_numeric_malformed_value_raises_typed_error():
+    pl = pytest.importorskip("polars")
+    bucket = EqualWidthBucket(n_bins=3, labels="ordinal").fit([0, 1, 2, 3, 4, 5])
+
+    # A numeric rule applied to a Utf8 Series containing a non-numeric value
+    # must raise the typed, pure-Python-equivalent error rather than leaking a
+    # Polars ComputeError.
+    with pytest.raises(InvalidBucketingError, match="oops"):
+        bucket.transform(pl.Series("age", ["1.0", "oops", "3.0"]))
+
+
+def test_polars_numeric_valid_string_column_matches_runtime():
+    pl = pytest.importorskip("polars")
+    bucket = EqualWidthBucket(n_bins=3, labels="ordinal").fit([0, 1, 2, 3, 4, 5])
+    values = ["0", "5", "10"]
+
+    out = bucket.transform(pl.Series("age", values))
+
+    assert out.to_list() == bucket.transform(values)
+
+
+def test_autobucket_polars_malformed_numeric_names_column():
+    pl = pytest.importorskip("polars")
+    auto = AutoBucket().fit(pl.DataFrame({"age": [1.0, 2.0, 3.0, 4.0, 5.0]}))
+
+    with pytest.raises(InvalidBucketingError, match="'age'"):
+        auto.transform(pl.DataFrame({"age": ["1.0", "bad", "3.0"]}))

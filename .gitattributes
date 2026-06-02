@@ -1,0 +1,28 @@
+# Normalize line endings: store everything as LF in the repo.
+# Git auto-detects text files and converts CRLF -> LF on commit.
+* text=auto eol=lf
+
+# Explicitly treat common text types as text (LF in repo).
+*.py    text eol=lf
+*.pyi   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.cfg   text eol=lf
+*.toml  text eol=lf
+*.ini   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.csv   text eol=lf
+
+# Binary files: never touch line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.whl   binary
+*.zip   binary
+*.gz    binary
+*.parquet binary
