@@ -23,7 +23,14 @@ print(bucket.to_json())
 
 ## Status
 
-The v0.4 supervised-binning release is implemented:
+The v0.5 production-and-performance release is implemented:
+
+- experimental streaming/online bucketing (`pickbuckets.experimental`)
+- optional matplotlib plotting helpers (`pickbuckets.plotting`, `[plot]` extra)
+- a reproducible [benchmark suite](benchmarks/README.md)
+- a [changelog](CHANGELOG.md) and [API reference](docs/api-reference.md)
+
+It builds on the v0.4 supervised-binning release:
 
 - one unified `Rule` model for numeric and categorical buckets
 - readable dict/JSON serialization with schema and package versions
@@ -402,6 +409,63 @@ Rules include:
 
 Loading a rule with an unsupported major schema version or an unknown policy
 value raises `RuleSchemaError`.
+
+## Streaming (experimental)
+
+`pickbuckets.experimental` holds online approximations, kept deliberately
+separate from the exact bucketers. `StreamingEqualFrequencyBucket` fits
+approximate quantile edges from data that does not fit in memory, then
+materializes a normal portable `Rule`.
+
+```python
+from pickbuckets.experimental import StreamingEqualFrequencyBucket
+
+bucket = StreamingEqualFrequencyBucket(n_bins=10, max_centroids=256)
+for chunk in chunks_of_data:        # data need not fit in memory
+    bucket.partial_fit(chunk)
+bucket.finalize()                   # build a standard portable Rule
+
+bucket.transform([1.0, 2.0])        # applies via the normal runtime
+print(bucket.to_json())
+```
+
+Only fitting is approximate. Error is bounded by `max_centroids` and the edges
+match the exact bucketer once it reaches the number of distinct values. APIs in
+`experimental` may change between minor releases.
+
+## Plotting
+
+Install with `pickbuckets[plot]`. The helpers in `pickbuckets.plotting` return a
+matplotlib `Axes` so you can customize and decide when to display.
+
+```python
+from pickbuckets import WoEBucket
+from pickbuckets.plotting import plot_bucket_counts, plot_target_rate, plot_woe
+
+bucket = WoEBucket(n_bins=4).fit([10, 20, 30, 40, 50, 60], [0, 0, 0, 1, 1, 1])
+
+ax = plot_woe(bucket)
+ax.set_title("WoE by score band")
+ax.figure.savefig("woe.png")
+```
+
+`plot_bucket_counts` works for any fitted bucketer or `Rule`; `plot_target_rate`
+and `plot_woe` require a supervised bucketer. Plotting is never required for the
+core package.
+
+## Benchmarks
+
+`benchmarks/run_benchmarks.py` is a reproducible suite (fixed seed) covering
+fit/transform across sizes, the runtime apply path versus adapter paths, and
+high-cardinality categorical grouping.
+
+```bash
+python benchmarks/run_benchmarks.py            # full suite
+python benchmarks/run_benchmarks.py --quick    # smoke run
+python benchmarks/run_benchmarks.py --json     # before/after comparison
+```
+
+See [benchmarks/README.md](benchmarks/README.md) for details.
 
 ## Development
 

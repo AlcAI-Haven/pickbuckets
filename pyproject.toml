@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pickbuckets"
-version = "0.4.0"
+version = "0.5.0"
 description = "Portable, human-readable bucketing rules for Python data workflows."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -70,7 +70,7 @@ strict = true
 packages = ["pickbuckets"]
 
 [[tool.mypy.overrides]]
-module = ["pandas", "pandas.*", "polars", "polars.*", "sklearn", "sklearn.*", "numpy", "numpy.*"]
+module = ["pandas", "pandas.*", "polars", "polars.*", "sklearn", "sklearn.*", "numpy", "numpy.*", "matplotlib", "matplotlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
