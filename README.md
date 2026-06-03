@@ -1,475 +1,111 @@
 # pickbuckets
 
 [![Python 3.9-3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/pickbuckets/)
-[![Rule schema 1.x](https://img.shields.io/badge/rule%20schema-1.x-blueviolet)](#rule-portability)
-[![pandas >=1.5](https://img.shields.io/badge/pandas-%3E%3D1.5-150458)](#pandas) [![Polars >=1.40](https://img.shields.io/badge/polars-%3E%3D1.40%20%28py3.10%2B%29-CD792C)](#polars) [![scikit-learn >=1.2](https://img.shields.io/badge/scikit--learn-%3E%3D1.2-F7931E)](#scikit-learn)
+[![Rule schema 1.x](https://img.shields.io/badge/rule%20schema-1.x-blueviolet)](docs/api-reference.md)
+[![pandas >=1.5](https://img.shields.io/badge/pandas-%3E%3D1.5-150458)](docs/integrations.md) [![Polars >=1.40](https://img.shields.io/badge/polars-%3E%3D1.40%20%28py3.10%2B%29-CD792C)](docs/integrations.md) [![scikit-learn >=1.2](https://img.shields.io/badge/scikit--learn-%3E%3D1.2-F7931E)](docs/integrations.md)
 
-Portable bucketing rules for ML feature engineering and scoring.
+**Bucketing rules you can serialize, inspect, diff, and run anywhere.**
 
 `pickbuckets` turns raw numerical and categorical values into human-readable,
-versioned rules that can be serialized, reviewed, diffed, and applied in a
-plain-Python runtime. The core package has no runtime dependencies; pandas,
-Polars, and scikit-learn support live behind optional extras.
+versioned bucketing rules. Fit a rule with the full stack (pandas, Polars,
+scikit-learn), serialize it to JSON, and apply it in a plain-Python service with
+**no runtime dependencies**. The same rule produces identical results in
+training, batch scoring, online inference, and monitoring.
+
+## Portability in one example
+
+Fit where the data lives; apply where the data doesn't.
 
 ```python
-from pickbuckets import EqualWidthBucket
+# --- training environment (full stack available) ---
+from pickbuckets import EqualFrequencyBucket
 
-bucket = EqualWidthBucket(n_bins=3, labels="interval")
-bucket.fit([1, 2, 3, 4, 5, 6])
-
-print(bucket.transform([1, 2.5, 6]))
-print(bucket.to_json())
+bucket = EqualFrequencyBucket(n_bins=4, duplicates="drop").fit(training_values)
+payload = bucket.to_json()          # store this string anywhere
 ```
 
-## Status
+```python
+# --- serving environment (standard library only) ---
+from pickbuckets import Rule
+from pickbuckets.runtime import apply_rule
 
-The v0.5 production-and-performance release is implemented:
+rule = Rule.from_json(payload)
+codes = apply_rule(rule, [0, 5, 10, None])   # no pandas / Polars / sklearn
+```
 
-- experimental streaming/online bucketing (`pickbuckets.experimental`)
-- optional matplotlib plotting helpers (`pickbuckets.plotting`, `[plot]` extra)
-- a reproducible [benchmark suite](benchmarks/README.md)
-- a [changelog](CHANGELOG.md) and [API reference](docs/api-reference.md)
-
-It builds on the v0.4 supervised-binning release:
-
-- one unified `Rule` model for numeric and categorical buckets
-- readable dict/JSON serialization with schema and package versions
-- dependency-free rule application for services and jobs
-- equal-width, equal-frequency, custom-boundary, and rare-category bucketers
-- `AutoBucket` for column-wise smart type dispatch
-- pandas `Series`/`DataFrame` support with index and column preservation
-- first-class Polars `Series`, `DataFrame`, and `LazyFrame` support
-- scikit-learn-compatible transformers in `pickbuckets.sklearn`
-- typed exceptions and configurable missing, boundary, and unknown-category
-  policies
-- most-frequent missing replacement, explicit underflow/overflow buckets, and
-  unknown-category `other`, `missing`, `keep`, and `error` strategies
-- supervised decision-tree, WoE/IV, ChiMerge, and external split import buckets
-- tests, lint, typing, build checks, and a no-heavy-dependencies CI gate
-
-## When To Use This
-
-Quick recap: use `pickbuckets` when ML buckets need to be stable, reviewable,
-and identical across training, batch scoring, online inference, and monitoring.
-
-It fits tabular preprocessing, feature-store transforms, score banding,
-model-monitoring slices, and governed models such as credit scoring, fraud
-detection, churn prediction, recommender ranking, pricing, healthcare or
-insurance risk, and regulatory workflows.
-
-See [docs/rule-gallery.md](docs/rule-gallery.md) for realistic JSON rule
-examples across ML use cases.
+`apply_rule` is pure Python (optionally NumPy) and is verified by a CI job with
+pandas, Polars, and scikit-learn uninstalled.
 
 ## Install
 
-For the dependency-free core:
-
 ```bash
-python -m pip install pickbuckets
-```
-
-For optional integrations:
-
-```bash
+python -m pip install pickbuckets                 # dependency-free core
 python -m pip install "pickbuckets[pandas]"
-python -m pip install "pickbuckets[polars]"  # Python 3.10+
+python -m pip install "pickbuckets[polars]"       # Python 3.10+
 python -m pip install "pickbuckets[sklearn]"
+python -m pip install "pickbuckets[plot]"
 python -m pip install "pickbuckets[all]"
+python -m pip install -e ".[dev,all]"             # development
 ```
 
-For development:
+## Bucketers
 
-```bash
-python -m pip install -e ".[dev,all]"
-```
+Every bucketer fits to a single unified [`Rule`](docs/api-reference.md) and shares
+the same `fit` / `transform` / `summary` / `to_json` shape. `transform()` uses
+only the saved rule — never the training data.
 
-## Current API
+| Bucketer | Kind | What it does | Needs |
+|---|---|---|---|
+| `EqualWidthBucket` | numeric | Equal-width bins from min/max | core |
+| `EqualFrequencyBucket` | numeric | Quantile (equal-frequency) bins | core |
+| `CustomBoundaryBucket` | numeric | Manual, validated edges (supports `±inf`) | core |
+| `RareCategoryBucket` | categorical | Fold rare/unseen categories to a fallback | core |
+| `AutoBucket` | mixed | One rule per column, dtype-driven dispatch | core |
+| `WoEBucket` | supervised | WoE/IV with monotonic + min-bin-size constraints | core |
+| `ChiMergeBucket` | supervised | Chi-square adjacent-bin merging | core |
+| `DecisionTreeBucket` | supervised | Edges from a shallow decision tree | `[sklearn]` |
+| `ExternalSplitBucket` | numeric | Import external splits (e.g. OptBinning) | core |
+| `StreamingEqualFrequencyBucket` | numeric, experimental | Online/approximate quantile bins for out-of-core data | core |
 
-```python
-from pickbuckets import (
-    AutoBucket,
-    ChiMergeBucket,
-    CustomBoundaryBucket,
-    DecisionTreeBucket,
-    EqualFrequencyBucket,
-    EqualWidthBucket,
-    ExternalSplitBucket,
-    RareCategoryBucket,
-    Rule,
-    WoEBucket,
-)
-```
-
-Every single-column bucketer follows the same shape:
-
-```python
-bucket.fit(values)
-bucket.transform(new_values)
-bucket.summary()
-bucket.to_dict()
-bucket.to_json()
-```
-
-`transform()` uses only the saved `rules_` object; it does not need the original
-training data.
-
-## Numeric Buckets
-
-### Equal-width
-
-```python
-from pickbuckets import EqualWidthBucket
-
-bucket = EqualWidthBucket(n_bins=4, labels="ordinal")
-bucket.fit([0, 10, 20, 30, 40])
-
-assert bucket.transform([5, 15, 40]) == [0, 1, 3]
-```
-
-Intervals are left-closed and right-open, except the final interval, which is
-closed on both sides so the maximum fitted value maps into the last bucket.
-
-### Equal-frequency
-
-```python
-from pickbuckets import EqualFrequencyBucket
-
-bucket = EqualFrequencyBucket(n_bins=4, duplicates="drop")
-bucket.fit([1, 1, 2, 3, 5, 8, 13, 21])
-
-print(bucket.rules_.edges)
-print(bucket.transform([1, 4, 21]))
-```
-
-Repeated values can produce duplicate quantile edges. By default this raises an
-error. Use `duplicates="drop"` to keep only the unique intervals that can be
-formed.
-
-### Custom boundaries
-
-```python
-from pickbuckets import CustomBoundaryBucket
-
-bucket = CustomBoundaryBucket(
-    edges=[0, 18, 35, 60, 100],
-    labels=["child", "young_adult", "adult", "senior"],
-    boundary_strategy="error",
-).fit()
-
-assert bucket.transform([18, 35, 60]) == ["young_adult", "adult", "senior"]
-```
-
-Custom edges must be sorted and unique. Open-ended boundaries are supported:
-
-```python
-bucket = CustomBoundaryBucket(
-    edges=[float("-inf"), 0, float("inf")],
-    labels=["negative", "non_negative"],
-).fit()
-```
-
-When exported to JSON, infinite edges are encoded as the strings `"-inf"` and
-`"inf"` so the file remains portable JSON.
-
-## Categorical Buckets
-
-`RareCategoryBucket` keeps frequent categories and maps rare or unseen
-categories to a fallback label by default.
-
-```python
-from pickbuckets import RareCategoryBucket
-
-bucket = RareCategoryBucket(min_frequency=2, other_label="Other")
-bucket.fit(["FR", "FR", "US", "DE"])
-
-assert bucket.transform(["FR", "US", "CA", None]) == [
-    "FR",
-    "Other",
-    "Other",
-    "Missing",
-]
-```
-
-`min_frequency` accepts either an absolute count (`2`) or a ratio (`0.05`).
-Category keys are stored as strings in the exported rule so JSON payloads remain
-portable.
-
-## AutoBucket
-
-`AutoBucket` fits one rule per column and chooses the strategy from each column
-dtype. Numeric columns use equal-frequency binning by default; categorical and
-string columns use rare-category folding. Explicit per-column overrides win over
-automatic inference.
+Plotting helpers (`pickbuckets.plotting`, behind `[plot]`) return matplotlib
+`Axes` for bucket counts, target rate, and WoE.
 
 ```python
 from pickbuckets import AutoBucket, EqualWidthBucket
 
-frame = {
-    "age": [18, 25, 34, 52, 70],
-    "country": ["FR", "FR", "US", "DE", "DE"],
-}
+frame = {"age": [18, 25, 34, 52, 70], "country": ["FR", "FR", "US", "DE", "DE"]}
 
 auto = AutoBucket(
     n_bins=3,
     min_frequency=2,
     overrides={"age": EqualWidthBucket(n_bins=3, labels="interval")},
 ).fit(frame)
-
 print(auto.transform(frame))
-print(auto.summary())
 ```
 
-Plain `dict[str, list]`, pandas `DataFrame`, Polars `DataFrame`, and Polars
-`LazyFrame` inputs return the same container type on transform. Transform input
-must contain the same column names fitted by the bucketer; missing or unexpected
-columns raise `InvalidBucketingError`.
-
-## Supervised Buckets
-
-Supervised bucketers require `fit(values, y)` and never require `y` during
-`transform()`. Target data is stored only as aggregate fit statistics such as
-counts, target rates, WoE, and IV.
-
-```python
-from pickbuckets import WoEBucket
-
-bucket = WoEBucket(
-    n_bins=3,
-    output="woe",
-    min_bin_size=0.1,
-    monotonic="auto",
-    smoothing=0.5,
-)
-bucket.fit([10, 20, 30, 40, 50, 60], [0, 0, 0, 1, 1, 1])
-
-print(bucket.transform([15, 45]))
-print(bucket.iv_summary())
-print(bucket.summary_table())
-```
-
-`DecisionTreeBucket` learns numeric edges from a shallow scikit-learn decision
-tree, so it requires `pickbuckets[sklearn]`. `ChiMergeBucket` and `WoEBucket`
-are dependency-free. `WoEBucket` supports count- or ratio-based
-`min_bin_size` constraints and optional monotonic WoE constraints with
-`monotonic="ascending"`, `"descending"`, or `"auto"`. `ExternalSplitBucket`
-imports externally learned split points, for example from OptBinning, into a
-normal portable numeric rule.
-
-## pandas
-
-Install with `pickbuckets[pandas]`. Single-column bucketers preserve pandas
-`Series` index and name, and `AutoBucket` preserves `DataFrame` columns and
-index.
-
-```python
-import pandas as pd
-from pickbuckets import AutoBucket
-
-df = pd.DataFrame(
-    {"age": [10, 20, 30, 40], "city": ["A", "A", "B", "C"]},
-    index=["r0", "r1", "r2", "r3"],
-)
-
-out = AutoBucket(n_bins=2, min_frequency=2).fit_transform(df)
-assert list(out.index) == list(df.index)
-assert list(out.columns) == ["age", "city"]
-```
-
-Nullable numeric dtypes, object/string columns, and categorical dtypes are
-handled by the same saved rule model as the dependency-free runtime.
-
-## Polars
-
-Install with `pickbuckets[polars]` on Python 3.10 or newer. Polars support uses
-native expressions for transform, not row-wise Python loops. Eager frames and
-lazy queries are both supported for non-raising rules.
-
-```python
-import polars as pl
-from pickbuckets import AutoBucket
-
-df = pl.DataFrame(
-    {"age": [10, 20, 30, 40], "city": ["A", "A", "B", "C"]}
-)
-
-auto = AutoBucket(n_bins=2, min_frequency=2, labels="interval").fit(df)
-eager = auto.transform(df)
-lazy = auto.transform(df.lazy()).collect()
-
-assert eager.to_dict(as_series=False) == lazy.to_dict(as_series=False)
-```
-
-Rules configured with an `error` strategy for missing values, numeric
-boundaries, or unknown categories require eager evaluation so the library can
-raise the same typed exceptions as the pure-Python runtime.
-
-Polars supports `unknown_category_strategy="keep"` when categorical outputs stay
-string-typed. Mixed-type outputs with `keep` are rejected because Polars cannot
-preserve arbitrary kept unknown strings and non-string labels in one native
-expression.
-
-## scikit-learn
-
-Install with `pickbuckets[sklearn]`. The sklearn adapters live in
-`pickbuckets.sklearn` so importing `pickbuckets` stays dependency-free.
-
-```python
-import numpy as np
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
-
-import pickbuckets.sklearn as pbsk
-
-X = np.array([[float(v)] for v in range(8)])
-y = [0, 0, 0, 0, 1, 1, 1, 1]
-
-pipe = Pipeline(
-    [("bucket", pbsk.EqualWidthBucket(n_bins=4)), ("model", LogisticRegression())]
-)
-pipe.fit(X, y)
-```
-
-The adapters expose `get_params`, `set_params`, `fit_transform`,
-`get_feature_names_out`, and fitted portable `Rule` objects on `rules_`.
-Transforms return integer code arrays suitable for downstream estimators.
-Feature names must match the fit-time order. The sklearn adapters do not support
-`unknown_category_strategy="keep"` because transforms must return stable integer
-code arrays.
-
-See [docs/integrations.md](docs/integrations.md) for the phase 2 integration
-details and CI coverage notes.
-
-## Policies And Errors
-
-Policies are stored on the unified rule and survive serialization.
-
-Missing values:
-
-- `missing_strategy="separate"` maps missing values to `missing_label`
-  (default: `"Missing"`).
-- `missing_strategy="most_frequent"` maps missing values to the most frequent
-  fitted output label. The learned replacement is stored on the rule as
-  `missing_label`.
-- `missing_strategy="propagate"` returns the original missing value.
-- `missing_strategy="error"` raises `MissingValueError`.
-
-Numeric boundaries:
-
-- `boundary_strategy="clip"` maps values below/above the fitted range to the
-  first/last label.
-- `boundary_strategy="underflow_overflow"` maps values below/above the fitted
-  range to `underflow_label` and `overflow_label`.
-- `boundary_strategy="error"` raises `BoundaryError`.
-
-Unknown categories:
-
-- `unknown_category_strategy="other"` maps unseen categories to `other_label`.
-- `unknown_category_strategy="missing"` maps unseen categories to
-  `missing_label`.
-- `unknown_category_strategy="keep"` returns unseen categories as strings.
-- `unknown_category_strategy="error"` raises `UnknownCategoryError`.
-
-Malformed numeric transform values raise `InvalidBucketingError`. Data-related
-errors include the fitted feature name when one is available.
-
-## Rule Portability
-
-Every fitted bucketer exposes a `rules_` object:
-
-```python
-from pickbuckets import EqualWidthBucket
-
-bucket = EqualWidthBucket(n_bins=2).fit([0, 10])
-payload = bucket.to_json()
-
-restored = EqualWidthBucket.from_json(payload)
-assert restored.transform([1, 9]) == bucket.transform([1, 9])
-```
-
-You can also apply a saved rule without constructing the original bucketer:
-
-```python
-from pickbuckets import Rule
-from pickbuckets.runtime import apply_rule
-
-rule = Rule.from_json(payload)
-assert apply_rule(rule, [0, 5, 10, None]) == [0, 1, 1, "Missing"]
-```
-
-Rules include:
-
-- `schema_version`
-- `package_version`
-- `kind`
-- numeric `edges` or categorical `category_mapping`
-- output `labels`
-- active missing, boundary, and unknown-category policies
-- underflow and overflow labels
-- `fit_stats`
-
-Loading a rule with an unsupported major schema version or an unknown policy
-value raises `RuleSchemaError`.
-
-## Streaming (experimental)
-
-`pickbuckets.experimental` holds online approximations, kept deliberately
-separate from the exact bucketers. `StreamingEqualFrequencyBucket` fits
-approximate quantile edges from data that does not fit in memory, then
-materializes a normal portable `Rule`.
-
-```python
-from pickbuckets.experimental import StreamingEqualFrequencyBucket
-
-bucket = StreamingEqualFrequencyBucket(n_bins=10, max_centroids=256)
-for chunk in chunks_of_data:        # data need not fit in memory
-    bucket.partial_fit(chunk)
-bucket.finalize()                   # build a standard portable Rule
-
-bucket.transform([1.0, 2.0])        # applies via the normal runtime
-print(bucket.to_json())
-```
-
-Only fitting is approximate. Error is bounded by `max_centroids` and the edges
-match the exact bucketer once it reaches the number of distinct values. APIs in
-`experimental` may change between minor releases.
-
-## Plotting
-
-Install with `pickbuckets[plot]`. The helpers in `pickbuckets.plotting` return a
-matplotlib `Axes` so you can customize and decide when to display.
-
-```python
-from pickbuckets import WoEBucket
-from pickbuckets.plotting import plot_bucket_counts, plot_target_rate, plot_woe
-
-bucket = WoEBucket(n_bins=4).fit([10, 20, 30, 40, 50, 60], [0, 0, 0, 1, 1, 1])
-
-ax = plot_woe(bucket)
-ax.set_title("WoE by score band")
-ax.figure.savefig("woe.png")
-```
-
-`plot_bucket_counts` works for any fitted bucketer or `Rule`; `plot_target_rate`
-and `plot_woe` require a supervised bucketer. Plotting is never required for the
-core package.
-
-## Benchmarks
-
-`benchmarks/run_benchmarks.py` is a reproducible suite (fixed seed) covering
-fit/transform across sizes, the runtime apply path versus adapter paths, and
-high-cardinality categorical grouping.
-
-```bash
-python benchmarks/run_benchmarks.py            # full suite
-python benchmarks/run_benchmarks.py --quick    # smoke run
-python benchmarks/run_benchmarks.py --json     # before/after comparison
-```
-
-See [benchmarks/README.md](benchmarks/README.md) for details.
+Configurable, serializable policies cover missing values
+(`separate` / `most_frequent` / `propagate` / `error`), numeric boundaries
+(`clip` / `underflow_overflow` / `error`), and unknown categories
+(`other` / `missing` / `keep` / `error`), each raising a clear typed exception.
+
+## Documentation
+
+- [Usage guide](docs/usage-guide.md) — worked examples for every bucketer and policy
+- [API reference](docs/api-reference.md) — symbols, the `Rule` model, runtime, exceptions
+- [Integrations](docs/integrations.md) — pandas, Polars, and scikit-learn adapters
+- [Rule gallery](docs/rule-gallery.md) — realistic portable JSON rules across ML use cases
+- [Benchmarks](benchmarks/README.md) — reproducible speed and memory suite
+- [Changelog](CHANGELOG.md)
+
+## When to use it
+
+Use `pickbuckets` when ML buckets must be stable, reviewable, and identical
+across training, batch scoring, online inference, and monitoring — tabular
+preprocessing, feature-store transforms, score banding, drift slices, and
+governed models such as credit scoring, fraud, churn, pricing, and insurance
+risk. See the [rule gallery](docs/rule-gallery.md) for examples.
 
 ## Development
-
-Run the full local check set before opening a PR:
 
 ```bash
 ruff check .
@@ -478,10 +114,6 @@ pytest
 python -m build
 ```
 
-Useful project principles:
-
-- Keep the base import dependency-free.
-- Put integrations behind optional extras.
-- Fit once, transform from saved rules.
-- Add serialization round-trip tests for every new bucketer.
-- Prefer clear typed exceptions over implicit coercion.
+Contributions follow a few principles — keep the core import dependency-free,
+put integrations behind extras, fit once and transform from saved rules. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
